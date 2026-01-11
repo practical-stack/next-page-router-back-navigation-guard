@@ -1,6 +1,6 @@
 {
   "name": "next-page-router-back-navigation-guard",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "description": "Navigation Guard for Next.js App Router and Pages Router.",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -24,7 +24,7 @@
     "e2e:install": "playwright install"
   },
   "keywords": [],
-  "author": "ypresto <yuya.presto@gmail.com>",
+  "author": "p-iknow <p.iknow.dev@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -36,13 +36,13 @@
     "react": "^18.0.0 || ^19.0.0 || ^19.0.0-rc"
   },
   "devDependencies": {
-    "@playwright/test": "^1.52.0",
+    "@playwright/test": "^1.57.0",
     "@types/node": "^20",
     "@types/react": "^18.3.5",
     "next": "^14.2.11",
-    "playwright": "^1.52.0",
+    "playwright": "^1.57.0",
     "react": "^18.3.1",
-    "tsup": "^8.2.4",
-    "typescript": "^5.6.2"
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
   }
 }

@@ -7,39 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2025-06-28
+## [0.1.0] - 2025-01-11
 
 ### Added
 
-- Support for Next.js 15.3+ Link component which no longer uses router.push()
-- Comprehensive E2E test suite using Playwright ([#28](https://github.com/practical-stack/next-page-router-back-navigation-guard/pull/28))
-- Support for React 19 ([#18](https://github.com/practical-stack/next-page-router-back-navigation-guard/pull/18)). @marekventur
+- Initial release of next-page-router-back-navigation-guard (complete rewrite)
+- `useRegisterBackNavigationHandler` hook for registering back navigation handlers
+- `BackNavigationHandlerProvider` component for enabling back navigation handling
+- Browser back button interception via popstate event
+- `router.back()` interception support
+- Handler options: `once`, `enable`, `override`
+- `preRegisteredHandler` prop for provider-level priority handlers
+- History API augmentation for accurate back/forward detection
+- Next.js 14 and 15 support
+- React 18 and 19 support
 
-### Fixed
-
-- Fix to use Math.random for jest compatibility ([#17](https://github.com/practical-stack/next-page-router-back-navigation-guard/pull/17)). @tmtmtoo
-- Fix jest import issue ([#14](https://github.com/practical-stack/next-page-router-back-navigation-guard/pull/14)). @peinguin
-
-## [0.1.2] - 2024-12-11
-
-### Fixed
-
-- deps: Support Next.js 14 / 15 as peer dependencies ([#13](https://github.com/practical-stack/next-page-router-back-navigation-guard/pulls/13)). @zachelrath
-
-## [0.1.1] - 2024-10-07
-
-### Fixed
-
-- Fix back/forward button does not change the contents of the page ([#2](https://github.com/practical-stack/next-page-router-back-navigation-guard/issues/2)).
-
-## [0.1.0] - 2024-09-18
-
-### Added
-
-- The initial release of next-page-router-back-navigation-guard.
-
-[unreleased]: https://github.com/practical-stack/next-page-router-back-navigation-guard/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/practical-stack/next-page-router-back-navigation-guard/releases/tag/v0.2.0
-[0.1.2]: https://github.com/practical-stack/next-page-router-back-navigation-guard/releases/tag/v0.1.2
-[0.1.1]: https://github.com/practical-stack/next-page-router-back-navigation-guard/releases/tag/v0.1.1
+[unreleased]: https://github.com/practical-stack/next-page-router-back-navigation-guard/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/practical-stack/next-page-router-back-navigation-guard/releases/tag/v0.1.0
