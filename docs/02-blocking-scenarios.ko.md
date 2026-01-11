@@ -1,0 +1,339 @@
+# 차단 시나리오
+
+이 문서는 `next-page-router-back-navigation-guard`가 처리하는 모든 뒤로가기 차단 시나리오를 상세히 설명합니다.
+
+---
+
+## 목차
+
+1. [핵심 메커니즘](#핵심-메커니즘)
+2. [시나리오 1: 일반 뒤로가기](#시나리오-1-일반-뒤로가기)
+3. [시나리오 2: 앞으로가기](#시나리오-2-앞으로가기)
+4. [시나리오 3: 다단계 히스토리 이동](#시나리오-3-다단계-히스토리-이동)
+5. [시나리오 4: Token Mismatch](#시나리오-4-token-mismatch)
+6. [시나리오 5: router.back()](#시나리오-5-routerback)
+7. [내부 처리 시나리오](#내부-처리-시나리오)
+8. [전체 흐름도](#전체-흐름도)
+
+---
+
+## 핵심 메커니즘
+
+### History API 패치
+
+브라우저의 History API는 현재 위치 `index`를 제공하지 않습니다. `pushState`와 `replaceState`를 패치하여 메타데이터를 주입합니다:
+
+```typescript
+{
+  __next_session_token: string,          // 세션 식별자
+  __next_navigation_stack_index: number  // 히스토리 스택 위치
+}
+```
+
+### Popstate 인터셉션
+
+Next.js Pages Router의 `beforePopState` 콜백을 사용하여 뒤로가기/앞으로가기를 가로챕니다.
+
+---
+
+## 시나리오 1: 일반 뒤로가기
+
+**상황**: 페이지1 → 페이지2에서 뒤로가기 버튼 클릭
+
+```
+[Page2] ← Back button clicked
+    │
+    ▼
+popstate event fired
+    │
+    ▼
+handler callback executed (e.g., confirm dialog)
+    │
+    ├── User selects "Cancel"
+    │     └→ history.go(1) called → Stay on Page2
+    │
+    └── User selects "OK"
+          └→ popstate re-dispatched → Navigate to Page1
+```
+
+| 항목 | 값 |
+|------|-----|
+| `to` | `/page1` |
+| 차단 조건 | handler 콜백이 `false` 반환 |
+
+---
+
+## 시나리오 2: 앞으로가기
+
+**상황**: 페이지1 ← 페이지2 (뒤로가기 후) → 앞으로가기 버튼 클릭
+
+```
+[Page1] → Forward button clicked
+    │
+    ▼
+popstate event fired
+    │
+    ▼
+delta calculation: nextIndex(1) - currentIndex(0) = 1
+    │
+    ▼
+delta > 0, detected as forward navigation
+    │
+    ▼
+Allow without handler callback → Navigate to Page2
+```
+
+**참고**: 앞으로가기(delta > 0)는 차단하지 않고 항상 허용됩니다.
+
+---
+
+## 시나리오 3: 다단계 히스토리 이동
+
+**상황**: 페이지1 → 페이지2 → 페이지3 → 페이지4에서 브라우저 히스토리 메뉴로 페이지1 직접 선택
+
+```
+Right-click back button → Select "Page1" from history menu
+    │
+    ▼
+delta = 0 - 3 = -3
+    │
+    ▼
+handler callback executed
+    │
+    ├── Cancel → history.go(3) → Stay on Page4
+    └── OK → Navigate to Page1
+```
+
+이런 경우가 발생하는 상황:
+1. 뒤로가기 버튼 롱클릭/우클릭 → 히스토리 목록에서 선택
+2. 코드에서 `history.go(-3)` 호출
+3. 브라우저 확장 프로그램의 히스토리 조작
+
+---
+
+## 시나리오 4: Token Mismatch
+
+**새로고침** 및 **외부 도메인 진입** 처리
+
+**상황 A**: 내 사이트 → 구글 → 뒤로가기로 내 사이트 복귀
+**상황 B**: 페이지 새로고침 후 뒤로가기
+
+```
+Back button clicked
+    │
+    ▼
+popstate event fired
+    │
+    ▼
+isAllowingNavigation 플래그 확인
+    │
+    ├── true → 네비게이션 허용 (핸들러가 이미 확인함)
+    │          플래그 초기화, token/index 업데이트, return true
+    │
+    └── false → token mismatch 검사 진행
+          │
+          ▼
+    isTokenMismatch = true 감지
+    (token 없음 또는 현재 세션과 불일치)
+          │
+          ▼
+    handler 콜백 전 URL 복원 필요
+          │
+          ▼
+    isRestoringFromTokenMismatch = true
+          │
+          ▼
+    history.go(1) 호출 → URL 복원 (앞으로 이동)
+          │
+          ▼
+    setTimeout: 비동기 handler 콜백 실행
+          │
+          ├── Cancel (handler가 false 반환)
+          │     └→ 현재 페이지 유지
+          │
+          └── OK (handler가 true 반환)
+                └→ 새 token/index 설정
+                └→ isAllowingNavigation = true  ← 중요: back() 호출 전에 설정
+                └→ window.history.back() 재호출
+                └→ 다음 popstate에서 isAllowingNavigation=true 확인
+                └→ 이전 페이지로 이동
+```
+
+**URL 복원 전략**:
+- popstate 시점에 `window.location.href`는 이미 목적지 URL로 변경됨
+- `pushState(state, "", window.location.href)` 사용 시 잘못된 URL push
+- 대신 `history.go(1)`로 앞으로 이동 (뒤로가기로 왔으므로)
+
+**Token Mismatch 감지 조건**:
+- `history.state`에 `__next_session_token` 없음
+- 또는 token이 현재 세션과 불일치 (새로고침 시 재생성)
+
+**isAllowingNavigation 플래그**:
+- handler가 네비게이션을 허용하면 (true 반환) `history.back()` 호출
+- 이는 또 다른 popstate 이벤트를 발생시키고, 다시 token mismatch로 감지됨
+- `isAllowingNavigation` 플래그로 이 후속 popstate를 허용 처리
+- **중요**: 플래그는 반드시 `history.back()` 호출 전에 설정해야 함
+
+---
+
+## 시나리오 5: router.back()
+
+**상황**: 코드에서 `router.back()` 호출
+
+```tsx
+<button onClick={() => router.back()}>Back</button>
+```
+
+```
+router.back() called
+    │
+    ▼
+Internally executes history.back()
+    │
+    ▼
+popstate event fired
+    │
+    ▼
+(Same flow as Scenario 1)
+```
+
+---
+
+## 내부 처리 시나리오
+
+### 시나리오 6: Delta가 0인 경우 (복원 Popstate)
+
+차단 후 `history.go(-delta)` 호출 시 또 다른 popstate가 발생합니다. 무한 루프 방지를 위해 delta가 0이면 무시합니다.
+
+```
+User back → handler cancel → history.go(1) called
+    │
+    ▼
+popstate re-fired
+    │
+    ▼
+delta = currentIndex - currentIndex = 0
+    │
+    ▼
+Event ignored (infinite loop prevention)
+```
+
+### 시나리오 7: Token Mismatch 복원 Popstate
+
+Token mismatch 차단 시 `history.go(1)` 호출로 또 다른 popstate가 발생합니다. `isRestoringFromTokenMismatch` 플래그로 무시합니다.
+
+```
+Token Mismatch detected → history.go(1) called
+    │
+    ▼
+isRestoringFromTokenMismatch = true
+    │
+    ▼
+popstate re-fired (by go(1))
+    │
+    ▼
+Check isRestoringFromTokenMismatch
+    │
+    ▼
+If true → Clear flag and ignore event
+```
+
+---
+
+## 전체 흐름도
+
+```
++------------------------------------------------------------------+
+|                    Back/Forward button clicked                    |
++------------------------------------------------------------------+
+                                   │
+                                   ▼
++------------------------------------------------------------------+
+|                      popstate event fired                         |
++------------------------------------------------------------------+
+                                   │
+                                   ▼
+                    +--------------------------+
+                    │ isAllowingNavigation?    │  ← 먼저 확인
+                    +--------------------------+
+                         │              │
+                        YES            NO
+                         │              │
+                         ▼              ▼
+                  +----------+  +--------------------------+
+                  │ 플래그   │  │ Token Mismatch?          │
+                  │ 초기화,  │  │ (token 없음/불일치)      │
+                  │ 허용     │  +--------------------------+
+                  +----------+       │              │
+                                    YES            NO
+                                     │              │
+                                     ▼              ▼
+                   +-------------------------+  +--------------+
+                   │ isRestoringFromToken    │  │ delta === 0? │
+                   │ Mismatch flag?          │  +--------------+
+                   +-------------------------+       │      │
+                          │          │             YES     NO
+                         YES        NO              │       │
+                          │          │              ▼       ▼
+                          ▼          ▼       +---------+  +--------------+
+                   +----------+  +--------+  │ Ignore  │  │ delta > 0?   │
+                   │ 플래그   │  │ handler│  +---------+  │ (forward)    │
+                   │ 초기화,  │  │ 있음?  │               +--------------+
+                   │ 무시     │  +--------+                    │      │
+                   +----------+    │    │                    YES     NO
+                                 YES   NO                     │       │
+                                  │     │                     ▼       ▼
+                          +----------+ +-----+         +---------+  +----------+
+                          │ go(1)    │ │허용 │         │ 허용    │  │ handler  │
+                          │ +플래그  │ +-----+         +---------+  │ 있음?    │
+                          +----------+                              +----------+
+                                │                                      │    │
+                                ▼                                    YES   NO
+                          +--------------+                             │     │
+                          │ setTimeout   │                             ▼     ▼
+                          │ handler 호출 │                      +----------+ +-----+
+                          +--------------+                      │ handler  │ │허용 │
+                                │                               │ callback │ +-----+
+                     +----------+----------+                    +----------+
+                     │                     │                         │
+                     ▼                     ▼              +----------+----------+
+               +----------+         +----------+          │                     │
+               │ 허용     │         │ 차단     │          ▼                     ▼
+               │ 플래그   │         │ 유지     │    +----------+         +----------+
+               │ back()   │         +----------+    │ 허용     │         │ 차단     │
+               +----------+                         │ 플래그   │         │ go(-delta)│
+                                                    │ go(delta)│         │ 복원     │
+                                                    +----------+         +----------+
+```
+
+---
+
+## 공개 API
+
+```typescript
+function useRegisterBackNavigationHandler(
+  handler: BackNavigationHandler,
+  options?: PartialBackNavigationHandlerOptions
+): void;
+
+// Handler 타입: true = 허용, false = 차단
+type BackNavigationHandler = () => boolean;
+
+interface PartialBackNavigationHandlerOptions {
+  once?: boolean;      // 실행 후 자동 해제 (기본값: false)
+  enable?: boolean;    // 조건부 등록 (기본값: true)
+  override?: boolean;  // 우선순위 핸들러 (기본값: false)
+  overridePriority?: 0 | 1 | 2 | 3;  // 우선순위 레벨 (기본값: 1)
+}
+```
+
+---
+
+## 관련 파일
+
+| 파일 | 역할 |
+|------|------|
+| `src/hooks/useInterceptPopState.ts` | Popstate 인터셉션 (핵심 로직) |
+| `src/hooks/useRegisterBackNavigationHandler.ts` | 핸들러 등록 훅 |
+| `src/utils/historyAugmentation.tsx` | History API 패치 |
+| `src/components/BackNavigationHandlerProvider.tsx` | Provider 컴포넌트 |
