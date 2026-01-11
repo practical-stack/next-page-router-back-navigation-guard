@@ -22,6 +22,7 @@ The documents are organized to tell a complete story. Read in order for best und
 |---|----------|-------------|
 | 04 | [Design Evolution](./04-design-evolution.md) | Why we moved from useEffect order to explicit priority system. |
 | 05 | [Internal Implementation](./05-internal-implementation.md) | Map structure, useState pattern, useId() for keys. |
+| 06 | [Stable Handler Reference](./06-stable-handler-reference.md) | Why `preRegisteredHandler` must maintain stable reference (useCurrentOverlayRef pattern). |
 
 ---
 

@@ -3,20 +3,17 @@
 You use Next.js Pages Router, and you want to show "You have unsaved changes that will be lost." dialog when user presses back button?
 This library is just for you!
 
+## Background
+
+This package is based on [next-navigation-guard](https://github.com/LayerXcom/next-navigation-guard), but has been rebuilt from scratch to focus solely on **back navigation** support for **Pages Router** only.
+
 ## How does it work?
 
-- [English Slide](https://speakerdeck.com/ypresto/cancel-next-js-page-navigation-full-throttle)
-- [Japanese Slide](https://speakerdeck.com/ypresto/hack-to-prevent-page-navigation-in-next-js)
+Please refer to the [docs](./docs) for detailed information.
 
 ## Installation
 
-```bash
-npm install next-page-router-back-navigation-guard
-# or
-yarn add next-page-router-back-navigation-guard
-# or
-pnpm add next-page-router-back-navigation-guard
-```
+> **Note:** This package is not yet published to npm. Coming soon!
 
 ## Setup
 

@@ -22,6 +22,7 @@
 |---|------|------|
 | 04 | [설계 진화 과정](./04-design-evolution.ko.md) | useEffect 순서에서 명시적 우선순위 시스템으로 바꾼 이유. |
 | 05 | [내부 구현](./05-internal-implementation.ko.md) | Map 구조, useState 패턴, useId() 키. |
+| 06 | [안정적인 핸들러 참조](./06-stable-handler-reference.md) | `preRegisteredHandler`가 stable reference를 유지해야 하는 이유 (useCurrentOverlayRef 패턴). |
 
 ---
 
