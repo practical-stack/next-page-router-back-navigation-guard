@@ -150,6 +150,10 @@ function createHandlePopState(
 
         // Run handler callbacks asynchronously after URL is restored
         setTimeout(async () => {
+          // [FIX] Reset here because history.go(1) popstate doesn't trigger beforePopState
+          // when navigating to the same URL (Next.js optimization).
+          isRestoringFromTokenMismatch = false;
+          
           // 1. Run preRegisteredHandler first (highest priority)
           if (preRegisteredHandler) {
             const shouldContinue = preRegisteredHandler();
@@ -211,6 +215,8 @@ function createHandlePopState(
     if (delta === 0) {
       if (DEBUG)
         console.log(`[Internal] Ignoring restoration popstate (delta is 0)`);
+      // Defensive reset: clear token mismatch flag on any delta===0 popstate
+      isRestoringFromTokenMismatch = false;
       return false;
     }
 
