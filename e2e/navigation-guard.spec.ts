@@ -231,4 +231,25 @@ test.describe("Navigation Guard - After Refresh (Token Mismatch)", () => {
     await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: basic");
     await expect(page).toHaveURL("/basic");
   });
+
+  test("should handle double back after refresh - second back closes modal via preRegisteredHandler", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("link", { name: "Basic Handler" }).click();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: basic");
+
+    await page.reload();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: basic");
+    await page.waitForTimeout(500);
+
+    await page.goBack();
+    await expect(page.getByTestId("confirm-dialog-cancel")).toBeVisible({ timeout: 10000 });
+    await page.waitForTimeout(500);
+
+    await page.goBack();
+    await page.waitForTimeout(1000);
+    await expect(page.getByTestId("confirm-dialog-cancel")).not.toBeVisible({ timeout: 5000 });
+    
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: basic");
+    await expect(page).toHaveURL("/basic");
+  });
 });
