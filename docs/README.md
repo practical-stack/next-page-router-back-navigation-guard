@@ -41,11 +41,11 @@ The documents are organized to tell a complete story. Read in order for best und
 
 | File | Purpose |
 |------|---------|
-| `src/hooks/useRegisterBackNavigationHandler.ts` | Handler registration hook |
-| `src/hooks/useInterceptPopState.ts` | Popstate interception (core) |
-| `src/utils/historyAugmentation.tsx` | History API patching |
-| `src/utils/sortHandlers.ts` | Priority-based sorting |
-| `src/components/BackNavigationHandlerProvider.tsx` | Provider component |
+| `src/useRegisterBackNavigationHandler.ts` | Handler registration hook |
+| `src/useInterceptPopState.ts` | Popstate interception (core) |
+| `src/useInterceptPopState.helper/history-augmentation.ts` | History API patching |
+| `src/useInterceptPopState.helper/sort-handlers.ts` | Priority-based sorting |
+| `src/BackNavigationHandlerProvider.tsx` | Provider component |
 
 ---
 

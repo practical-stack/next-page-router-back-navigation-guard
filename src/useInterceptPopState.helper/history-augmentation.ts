@@ -1,6 +1,23 @@
+/**
+ * History API Augmentation
+ *
+ * Patches the browser's History API to track navigation stack index and session token.
+ *
+ * Problem: The History API doesn't expose a stack index - there's no way to know
+ * the current position in the history stack or calculate the delta between navigations.
+ * The Navigation API has `navigation.currentEntry.index` but Safari/Firefox don't support it.
+ *
+ * Solution: Monkey-patch `history.pushState` and `history.replaceState` to inject
+ * custom metadata (__next_navigation_stack_index, __next_session_token) into history.state.
+ * This allows us to track position and detect session changes (refresh, external entry).
+ *
+ * @see docs/HISTORY_API_HACKS.md for detailed explanation
+ */
+
 import { RenderedState } from "./types";
 import { DEBUG } from "../@shared/debug";
 
+// Module-level singleton state
 let _isHistoryStateSyncInitialized = false;
 let _renderedState: RenderedState = { historyIndex: -1, sessionToken: "" };
 let _setRenderedStateAndSyncToHistory: (params: {
@@ -8,18 +25,38 @@ let _setRenderedStateAndSyncToHistory: (params: {
   shouldSyncToHistory: boolean;
 }) => void = () => {};
 
+/**
+ * Generates a random session token to identify the current browser session.
+ * Used to detect page refresh or external domain entry.
+ */
 export function generateSessionToken(): string {
   return Math.random().toString(36).substring(2);
 }
 
+/**
+ * Returns an immutable copy of the current rendered state.
+ */
 export function getRenderedState(): RenderedState {
   return { ..._renderedState };
 }
 
+/**
+ * Updates the module-level rendered state (immutable update).
+ */
 function setRenderedState(renderedState: RenderedState): void {
   _renderedState = { ...renderedState };
 }
 
+/**
+ * Initializes history state synchronization (singleton - only runs once).
+ *
+ * This function:
+ * 1. Patches history.pushState to increment historyIndex on each call
+ * 2. Patches history.replaceState to maintain current index
+ * 3. Injects session token and index into history.state for tracking
+ *
+ * @returns Object with setRenderedStateAndSyncToHistory function
+ */
 export function initializeHistoryStateSyncOnce(): {
   setRenderedStateAndSyncToHistory: (params: {
     renderedState: RenderedState;
@@ -32,6 +69,7 @@ export function initializeHistoryStateSyncOnce(): {
 
   if (DEBUG) console.log("initializeHistoryStateSyncOnce: initializing");
 
+  // Store original methods before patching
   const originalHistoryPushState = window.history.pushState;
   const originalHistoryReplaceState = window.history.replaceState;
 
@@ -42,6 +80,7 @@ export function initializeHistoryStateSyncOnce(): {
     };
   }
 
+  // Initialize state from existing history.state (if available)
   setRenderedState({
     historyIndex: parseInt(window.history.state.__next_navigation_stack_index) || 0,
     sessionToken: String(window.history.state.__next_session_token ?? "") || generateSessionToken(),
@@ -50,10 +89,11 @@ export function initializeHistoryStateSyncOnce(): {
   if (DEBUG) {
     const currentRenderedState = getRenderedState();
     console.log(
-      `setupHistoryStateSync: initial historyIndex=${currentRenderedState.historyIndex}, sessionToken=${currentRenderedState.sessionToken}`
+      `initializeHistoryStateSyncOnce: initial historyIndex=${currentRenderedState.historyIndex}, sessionToken=${currentRenderedState.sessionToken}`
     );
   }
 
+  // Create the state update function
   _setRenderedStateAndSyncToHistory = ({
     renderedState,
     shouldSyncToHistory,
@@ -69,6 +109,7 @@ export function initializeHistoryStateSyncOnce(): {
 
     setRenderedState(renderedState);
 
+    // Optionally sync to history.state via replaceState
     if (shouldSyncToHistory) {
       const modifiedHistoryState = {
         ...window.history.state,
@@ -85,6 +126,7 @@ export function initializeHistoryStateSyncOnce(): {
     }
   };
 
+  // Sync initial state to history if not already present
   if (
     window.history.state.__next_navigation_stack_index == null ||
     window.history.state.__next_session_token == null
@@ -92,6 +134,7 @@ export function initializeHistoryStateSyncOnce(): {
     _setRenderedStateAndSyncToHistory({ renderedState: getRenderedState(), shouldSyncToHistory: true });
   }
 
+  // Patch pushState: increment index on each navigation
   window.history.pushState = function (historyState, unused, url) {
     const currentRenderedState = getRenderedState();
     const nextRenderedState: RenderedState = currentRenderedState.sessionToken
@@ -104,6 +147,7 @@ export function initializeHistoryStateSyncOnce(): {
       console.log(`history.pushState: historyIndex=${nextRenderedState.historyIndex}, sessionToken=${nextRenderedState.sessionToken}`);
     }
 
+    // Inject our tracking metadata into the state object
     const modifiedHistoryState = {
       ...historyState,
       __next_session_token: nextRenderedState.sessionToken,
@@ -112,6 +156,7 @@ export function initializeHistoryStateSyncOnce(): {
     originalHistoryPushState.call(this, modifiedHistoryState, unused, url);
   };
 
+  // Patch replaceState: maintain current index, just update state
   window.history.replaceState = function (historyState, unused, url) {
     const currentRenderedState = getRenderedState();
     const nextRenderedState: RenderedState = currentRenderedState.sessionToken

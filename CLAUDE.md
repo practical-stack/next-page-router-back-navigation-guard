@@ -34,8 +34,8 @@ pnpm lint                # Next.js linter
 ### Navigation Interception Strategy
 
 The library intercepts **back navigation only** through:
-1. **History popstate** (`useInterceptPopState`) - Browser back button and `router.back()`
-2. **History augmentation** (`historyAugmentation`) - Patches History API to track index
+1. **History popstate** (`useInterceptPopState.ts`) - Browser back button and `router.back()`
+2. **History augmentation** (`useInterceptPopState.helper/history-augmentation.ts`) - Patches History API to track index
 
 **Not intercepted** (by design):
 - `router.push()`, `router.replace()`, `<Link>` clicks - pass through unchanged
@@ -47,9 +47,17 @@ The library intercepts **back navigation only** through:
 BackNavigationHandlerProvider (root wrapper)
 ├── BackNavigationHandlerContext (handler map via React Context)
 └── useInterceptPopState (popstate interception - core logic)
+    └── useInterceptPopState.helper/
+        ├── history-augmentation.ts (History API patching)
+        ├── interception-state.ts (isRestoringUrl, isNavigationConfirmed flags)
+        ├── rendered-state-context.ts (historyIndex, sessionToken state)
+        ├── parse-history-state.ts (extract token/index from history.state)
+        ├── handler-execution.ts (run handler chain)
+        ├── sort-handlers.ts (priority-based sorting)
+        └── types.ts (RenderedState, NextHistoryState)
 ```
 
-### Key Types (src/types.ts)
+### Key Types (src/@shared/types.ts)
 
 - `BackNavigationParams` - Event info: `{ to }` (destination path)
 - `BackNavigationCallback` - Internal: `(params) => boolean | Promise<boolean>`
@@ -79,17 +87,19 @@ Next.js has no official API to cancel navigation. Community discussions (#9662, 
 
 ### The Core Hack
 
-**Patch history.pushState to track index** (`historyAugmentation`)
+**Patch history.pushState to track index** (`history-augmentation.ts`)
 - Problem: History API has no index property; can't know back/forward delta
 - Navigation API has `navigation.currentEntry.index` but Safari/Firefox don't support it
-- Solution: Patch `history.pushState()` to inject custom index into `history.state`
-- On popstate: calculate `delta = history.state.index - renderedIndex`
+- Solution: Patch `history.pushState()` to inject custom metadata into `history.state`:
+  - `__next_navigation_stack_index` - Position in history stack
+  - `__next_session_token` - Unique identifier for current session
+- On popstate: calculate `historyIndexDelta = nextHistoryIndex - currentHistoryIndex`
 - If delta < 0 (back navigation): restore URL with `history.go(-delta)`, run handler
 - If delta > 0 (forward navigation): allow without blocking
 
 ### Token-based Session Identification
 
-Token in `history.state` identifies the current session:
+Session token (`sessionToken`) in `history.state` identifies the current session:
 - Token mismatch (refresh, external domain entry): use `history.go(1)` to restore
 - Token match (normal back navigation): use `history.go(-delta)` to restore
 

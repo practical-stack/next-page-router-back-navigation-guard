@@ -333,7 +333,7 @@ interface PartialBackNavigationHandlerOptions {
 
 | File | Purpose |
 |------|---------|
-| `src/hooks/useInterceptPopState.ts` | Popstate interception (core logic) |
-| `src/hooks/useRegisterBackNavigationHandler.ts` | Handler registration hook |
-| `src/utils/historyAugmentation.tsx` | History API patching |
-| `src/components/BackNavigationHandlerProvider.tsx` | Provider component |
+| `src/useInterceptPopState.ts` | Popstate interception (core logic) |
+| `src/useRegisterBackNavigationHandler.ts` | Handler registration hook |
+| `src/useInterceptPopState.helper/history-augmentation.ts` | History API patching |
+| `src/BackNavigationHandlerProvider.tsx` | Provider component |

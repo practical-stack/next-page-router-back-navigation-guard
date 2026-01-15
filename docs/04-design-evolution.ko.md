@@ -237,6 +237,6 @@ useRegisterBackNavigationHandler(
 
 | 파일 | 역할 |
 |------|------|
-| `src/hooks/useRegisterBackNavigationHandler.ts` | 옵션이 있는 핸들러 등록 |
-| `src/utils/sortHandlers.ts` | 우선순위 기반 정렬 |
-| `src/hooks/useInterceptPopState.ts` | 핸들러 실행 로직 |
+| `src/useRegisterBackNavigationHandler.ts` | 옵션이 있는 핸들러 등록 |
+| `src/useInterceptPopState.helper/sort-handlers.ts` | 우선순위 기반 정렬 |
+| `src/useInterceptPopState.ts` | 핸들러 실행 로직 |

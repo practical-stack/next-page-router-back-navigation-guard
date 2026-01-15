@@ -1,3 +1,18 @@
+/**
+ * Popstate Interception Hook
+ *
+ * Intercepts browser back/forward navigation in Next.js Pages Router.
+ * This module handles the core popstate event interception logic.
+ *
+ * Key Concepts:
+ * - Session Token: A unique identifier for the current browser session.
+ *   Used to detect page refresh or external domain entry (token mismatch).
+ * - History Index: Tracks position in the history stack to calculate navigation delta.
+ * - Interception Flow: Restore URL first, run handlers, then allow/block navigation.
+ *
+ * @see https://github.com/vercel/next.js/discussions/47020#discussioncomment-7826121
+ */
+
 import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
 import { useContext } from "react";
 import { HandlerDef } from "./@shared/types";
@@ -23,6 +38,13 @@ import {
 
 type PopstateHandler = (historyState: NextHistoryState) => boolean;
 
+/**
+ * Hook that intercepts popstate events and runs registered handlers before navigation.
+ *
+ * Uses Next.js Pages Router's `beforePopState` API to intercept navigation.
+ * Returns false from beforePopState to prevent Next.js from handling the navigation,
+ * then manually controls whether to allow or block based on handler results.
+ */
 export function useInterceptPopState({
   handlerMap,
   preRegisteredHandler,
@@ -48,6 +70,14 @@ export function useInterceptPopState({
   }, [pagesRouter, preRegisteredHandler]);
 }
 
+/**
+ * Creates the popstate handler that processes all navigation interception logic.
+ *
+ * The handler distinguishes between three scenarios:
+ * 1. Already confirmed navigation - Allow immediately (handler already approved)
+ * 2. Session token mismatch - Page was refreshed or entered from external domain
+ * 3. Internal navigation - Normal back/forward within the app
+ */
 function createPopstateHandler(
   handlerMap: Map<string, HandlerDef>,
   preRegisteredHandler?: () => boolean
@@ -66,8 +96,11 @@ function createPopstateHandler(
     const historyIndexDelta = nextHistoryIndex - currentRenderedState.historyIndex;
 
     // ========================================
-    // 이미 승인된 네비게이션
+    // Already Confirmed Navigation
     // ========================================
+    // When handler approves navigation, it sets isNavigationConfirmed=true and triggers
+    // history.back() or history.go(). This causes another popstate event, which we
+    // detect here and allow through without re-running handlers.
     if (interceptionStateContext.getState().isNavigationConfirmed) {
       if (DEBUG) console.log(`[Confirmed] Navigation confirmed by handler`);
       interceptionStateContext.setState({ isNavigationConfirmed: false });
@@ -78,9 +111,17 @@ function createPopstateHandler(
     }
 
     // ========================================
-    // Session Token Mismatch (새로고침, 외부 진입)
+    // Session Token Mismatch (Refresh or External Entry)
     // ========================================
+    // Occurs when:
+    // - User refreshes the page (new session, no token in history.state)
+    // - User enters from external domain or direct URL
+    // - Token in history.state doesn't match current session token
+    //
+    // Strategy: Use history.go(1) to restore URL, then run handlers.
+    // If approved, set isNavigationConfirmed and call history.back().
     if (isSessionTokenMismatch) {
+      // Ignore popstate triggered by our own history.go(1) restoration
       if (interceptionStateContext.getState().isRestoringUrl) {
         if (DEBUG) console.log(`[SessionTokenMismatch] Ignoring (restoring URL)`);
         interceptionStateContext.setState({ isRestoringUrl: false });
@@ -93,6 +134,7 @@ function createPopstateHandler(
         );
       }
 
+      // No handlers registered - allow navigation immediately
       if (!hasRegisteredHandlers(handlerMap)) {
         renderedStateContext.setStateAndSyncToHistory(
           computeNextRenderedState(nextSessionToken, nextHistoryIndex)
@@ -100,10 +142,12 @@ function createPopstateHandler(
         return true;
       }
 
+      // Restore URL first, then run handlers asynchronously
       if (DEBUG) console.log(`[SessionTokenMismatch] Restoring URL with history.go(1)`);
       interceptionStateContext.setState({ isRestoringUrl: true });
       window.history.go(1);
 
+      // Use setTimeout to ensure URL restoration completes before running handlers
       setTimeout(async () => {
         interceptionStateContext.setState({ isRestoringUrl: false });
         const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(handlerContext, "");
@@ -122,15 +166,19 @@ function createPopstateHandler(
     }
 
     // ========================================
-    // Internal Navigation (일반 뒤로/앞으로)
+    // Internal Navigation (Normal Back/Forward)
     // ========================================
+    // Normal navigation within the app where session token matches.
+    // Delta calculation: positive = forward, negative = back, zero = no-op
 
+    // Delta is 0 when URL was restored by history.go(-delta) - ignore this event
     if (historyIndexDelta === 0) {
       if (DEBUG) console.log(`[Internal] Ignoring (historyIndexDelta is 0)`);
       interceptionStateContext.setState({ isRestoringUrl: false });
       return false;
     }
 
+    // Forward navigation - always allow (we only guard back navigation)
     if (historyIndexDelta > 0) {
       if (DEBUG) console.log(`[Internal] Forward navigation (historyIndexDelta: ${historyIndexDelta})`);
       renderedStateContext.setState(
@@ -139,8 +187,10 @@ function createPopstateHandler(
       return true;
     }
 
+    // Back navigation - this is what we guard
     if (DEBUG) console.log(`[Internal] Back navigation (historyIndexDelta: ${historyIndexDelta})`);
 
+    // No handlers registered - allow navigation immediately
     if (!hasRegisteredHandlers(handlerMap)) {
       if (DEBUG) console.log(`[Internal] No handlers`);
       renderedStateContext.setState(
@@ -149,9 +199,11 @@ function createPopstateHandler(
       return true;
     }
 
+    // Restore URL first by going forward by the same delta, then run handlers
     if (DEBUG) console.log(`[Internal] Restoring URL with history.go(${-historyIndexDelta})`);
     window.history.go(-historyIndexDelta);
 
+    // Run handlers asynchronously after URL restoration
     (async () => {
       const destinationPath = location.pathname + location.search;
       const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(handlerContext, destinationPath);
