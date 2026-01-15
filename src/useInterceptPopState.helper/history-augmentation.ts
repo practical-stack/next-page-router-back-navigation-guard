@@ -81,6 +81,7 @@ export function initializeHistoryStateSyncOnce(): {
   }
 
   // Initialize state from existing history.state (if available)
+  // Note: String() wrapper ensures parseInt receives a string even when value is number/undefined
   setRenderedState({
     historyIndex: parseInt(String(window.history.state?.__next_navigation_stack_index ?? "0"), 10) || 0,
     sessionToken: String(window.history.state?.__next_session_token ?? "") || generateSessionToken(),
