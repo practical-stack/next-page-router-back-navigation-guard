@@ -333,7 +333,7 @@ interface PartialBackNavigationHandlerOptions {
 
 | 파일 | 역할 |
 |------|------|
-| `src/hooks/useInterceptPopState.ts` | Popstate 인터셉션 (핵심 로직) |
-| `src/hooks/useRegisterBackNavigationHandler.ts` | 핸들러 등록 훅 |
-| `src/utils/historyAugmentation.tsx` | History API 패치 |
-| `src/components/BackNavigationHandlerProvider.tsx` | Provider 컴포넌트 |
+| `src/useInterceptPopState.ts` | Popstate 인터셉션 (핵심 로직) |
+| `src/useRegisterBackNavigationHandler.ts` | 핸들러 등록 훅 |
+| `src/useInterceptPopState.helper/history-augmentation.ts` | History API 패치 |
+| `src/BackNavigationHandlerProvider.tsx` | Provider 컴포넌트 |

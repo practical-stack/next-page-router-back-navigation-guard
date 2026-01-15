@@ -441,5 +441,5 @@ Next.js Pages Router provides `beforePopState` to intercept navigation, but leav
 
 | File | Purpose |
 |------|---------|
-| `src/utils/historyAugmentation.tsx` | History API patching (index/token injection) |
-| `src/hooks/useInterceptPopState.ts` | Popstate interception and handling |
+| `src/useInterceptPopState.helper/history-augmentation.ts` | History API patching (index/token injection) |
+| `src/useInterceptPopState.ts` | Popstate interception and handling |

@@ -20,13 +20,12 @@ export function useInterceptPopState({
   const pagesRouter = useContext(RouterContext);
 
   useIsomorphicLayoutEffect(() => {
-    const handlePopState = createHandlePopState(
+    const popstateHandler = createPopstateHandler(
       handlerMap,
-      writeState,
       preRegisteredHandler
     );
 
-    pagesRouter.beforePopState(() => handlePopState(history.state));
+    pagesRouter.beforePopState(() => popstateHandler(history.state));
 
     return () => {
       pagesRouter.beforePopState(() => true);
@@ -34,21 +33,22 @@ export function useInterceptPopState({
   }, [pagesRouter, preRegisteredHandler]);  // ← preRegisteredHandler가 deps에 있음
 }
 
-function createHandlePopState(...) {
-  let isAllowingNavigation = false;  // ← 여기서 생성됨!
+function createPopstateHandler(...) {
+  const interceptionStateContext = createInterceptionStateContext();  // ← 상태가 여기서 생성됨!
+  // interceptionStateContext 내부에 isNavigationConfirmed 등의 상태가 캡슐화됨
 
-  return (nextState) => {
+  return (historyState) => {
     // ...
-    if (isAllowingNavigation) {
-      isAllowingNavigation = false;
+    if (interceptionStateContext.getState().isNavigationConfirmed) {
+      interceptionStateContext.setState({ isNavigationConfirmed: false });
       return true;
     }
     // ...
     
     (async () => {
-      const shouldContinue = await handler();
-      if (shouldContinue) {
-        isAllowingNavigation = true;  // ← 여기서 true로 설정
+      const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(...);
+      if (shouldAllowNavigation) {
+        interceptionStateContext.setState({ isNavigationConfirmed: true });  // ← 여기서 true로 설정
         window.history.go(delta);
       }
     })();
@@ -68,7 +68,7 @@ function createHandlePopState(...) {
 [T0] 유저가 뒤로가기 클릭
      │
      ▼
-[T1] handlePopState_A 호출 (isAllowingNavigation_A = false)
+[T1] popstateHandler_A 호출 (state_A.isNavigationConfirmed = false)
      │
      ▼
 [T2] 다이얼로그 표시, 유저 입력 대기...
@@ -77,19 +77,19 @@ function createHandlePopState(...) {
 [T3] 유저가 "Leave" 클릭
      │
      ▼
-[T4] isAllowingNavigation_A = true 설정
+[T4] state_A.isNavigationConfirmed = true 설정
      │
      ▼
 [T5] history.go(delta) 호출
      │
      ▼
-[T6] 새 popstate 발생 → handlePopState_A 호출
+[T6] 새 popstate 발생 → popstateHandler_A 호출
      │
      ▼
-[T7] isAllowingNavigation_A === true → 네비게이션 허용 ✅
+[T7] state_A.isNavigationConfirmed === true → 네비게이션 허용 ✅
 ```
 
-**핵심:** 같은 `handlePopState_A` 인스턴스가 계속 사용되므로 `isAllowingNavigation_A` 플래그가 유지됨.
+**핵심:** 같은 `popstateHandler_A` 인스턴스가 계속 사용되므로 `state_A` 상태가 유지됨.
 
 ---
 
@@ -110,7 +110,7 @@ const preRegisteredHandler = () => {
 [T0] 유저가 뒤로가기 클릭
      │
      ▼
-[T1] handlePopState_A 호출 (isAllowingNavigation_A = false)
+[T1] popstateHandler_A 호출 (state_A: isNavigationConfirmed = false)
      │
      ▼
 [T2] 다이얼로그 표시 → currentOverlay 변경됨!
@@ -120,27 +120,27 @@ const preRegisteredHandler = () => {
      │
      ▼
 [T2.2] Effect 재실행:
-       ┌─────────────────────────────────────────────┐
-       │ cleanup: handlePopState_A 해제              │
-       │ setup:   handlePopState_B 새로 생성         │
-       │          (isAllowingNavigation_B = false)  │  ← 새 플래그!
-       └─────────────────────────────────────────────┘
+       ┌───────────────────────────────────────────────────────┐
+       │ cleanup: popstateHandler_A 해제                       │
+       │ setup:   popstateHandler_B 새로 생성                  │
+       │          (state_B: isNavigationConfirmed = false)     │  ← 새 상태!
+       └───────────────────────────────────────────────────────┘
      │
      ▼
 [T3] 유저가 "Leave" 클릭
      │
      ▼
-[T4] isAllowingNavigation_A = true 설정
-     │  (하지만 handlePopState_A는 이미 해제됨!)
+[T4] state_A.isNavigationConfirmed = true 설정
+     │  (하지만 popstateHandler_A는 이미 해제됨!)
      │
      ▼
 [T5] history.go(delta) 호출
      │
      ▼
-[T6] 새 popstate 발생 → handlePopState_B 호출 (현재 등록된 핸들러)
+[T6] 새 popstate 발생 → popstateHandler_B 호출 (현재 등록된 핸들러)
      │
      ▼
-[T7] isAllowingNavigation_B === false → 네비게이션 차단! ❌
+[T7] state_B.isNavigationConfirmed === false → 네비게이션 차단! ❌
 ```
 
 ---
@@ -152,12 +152,12 @@ const preRegisteredHandler = () => {
 │                    Stable preRegisteredHandler                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  handlePopState_A                                                   │
+│  popstateHandler_A (state_A)                                         │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │ isAllowingNavigation = false → true                         │   │
-│  │                              ↑                              │   │
-│  │ [T1]                      [T4]                        [T7]  │   │
-│  │  호출 ─────────────────── 설정 ─────────────────────── 확인 │   │
+│  │ state_A.isNavigationConfirmed = false → true                │   │
+│  │                                   ↑                         │   │
+│  │ [T1]                           [T4]                   [T7]  │   │
+│  │  호출 ────────────────────────  설정 ─────────────────  확인 │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                              같은 인스턴스 ✅                        │
 └─────────────────────────────────────────────────────────────────────┘
@@ -166,16 +166,17 @@ const preRegisteredHandler = () => {
 │                   Unstable preRegisteredHandler                      │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  handlePopState_A (해제됨)     handlePopState_B (새로 생성)          │
+│  popstateHandler_A (해제됨)     popstateHandler_B (새로 생성)        │
 │  ┌────────────────────────┐   ┌────────────────────────────────┐   │
-│  │ isAllowingNavigation   │   │ isAllowingNavigation           │   │
+│  │ state_A                │   │ state_B                        │   │
+│  │ .isNavigationConfirmed │   │ .isNavigationConfirmed         │   │
 │  │ = false → true         │   │ = false                        │   │
 │  │      ↑                 │   │                           ↑    │   │
 │  │ [T1] [T4]              │   │                          [T7]  │   │
 │  │  호출  설정             │   │                          확인  │   │
 │  └────────────────────────┘   └────────────────────────────────┘   │
 │         ↑                              ↑                            │
-│    이 플래그에 설정했지만...      이 플래그는 false! ❌              │
+│    이 상태에 설정했지만...        이 상태는 false! ❌                │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -228,9 +229,9 @@ function AppContent({ Component, pageProps }) {
 `preRegisteredHandler`가 변경되면:
 
 1. **Effect가 재실행**됨 (deps에 포함되어 있으므로)
-2. **새로운 `handlePopState` 클로저 생성** (`createHandlePopState` 호출)
-3. **새로운 `isAllowingNavigation` 변수 생성** (초기값 `false`)
-4. 이전 async 핸들러가 설정한 플래그는 **이전 클로저에만 존재**
-5. 새 popstate는 **새 클로저의 플래그**를 확인 → `false` → 차단
+2. **새로운 `popstateHandler` 클로저 생성** (`createPopstateHandler` 호출)
+3. **새로운 `createInterceptionStateContext()` 호출로 상태 객체 생성** (모든 상태 초기화)
+4. 이전 async 핸들러가 설정한 상태는 **이전 클로저의 state 객체에만 존재**
+5. 새 popstate는 **새 클로저의 state**를 확인 → `isNavigationConfirmed === false` → 차단
 
 그래서 `useCallback(fn, [])`으로 stable reference를 유지하고, ref로 최신 값을 읽는 패턴이 필요합니다.

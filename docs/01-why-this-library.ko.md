@@ -420,5 +420,5 @@ Next.js는 `beforePopState`로 navigation intercept 방법은 제공하지만, �
 
 | File | 역할 |
 |------|------|
-| `src/utils/historyAugmentation.tsx` | History API patch (index/token 주입) |
-| `src/hooks/useInterceptPopState.ts` | popstate intercept 및 처리 |
+| `src/useInterceptPopState.helper/history-augmentation.ts` | History API patch (index/token 주입) |
+| `src/useInterceptPopState.ts` | popstate intercept 및 처리 |

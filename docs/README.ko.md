@@ -41,11 +41,11 @@
 
 | 파일 | 역할 |
 |------|------|
-| `src/hooks/useRegisterBackNavigationHandler.ts` | 핸들러 등록 훅 |
-| `src/hooks/useInterceptPopState.ts` | Popstate 인터셉션 (핵심) |
-| `src/utils/historyAugmentation.tsx` | History API 패치 |
-| `src/utils/sortHandlers.ts` | 우선순위 기반 정렬 |
-| `src/components/BackNavigationHandlerProvider.tsx` | Provider 컴포넌트 |
+| `src/useRegisterBackNavigationHandler.ts` | 핸들러 등록 훅 |
+| `src/useInterceptPopState.ts` | Popstate 인터셉션 (핵심) |
+| `src/useInterceptPopState.helper/history-augmentation.ts` | History API 패치 |
+| `src/useInterceptPopState.helper/sort-handlers.ts` | 우선순위 기반 정렬 |
+| `src/BackNavigationHandlerProvider.tsx` | Provider 컴포넌트 |
 
 ---
 
