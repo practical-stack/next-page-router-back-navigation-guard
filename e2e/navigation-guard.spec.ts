@@ -64,6 +64,32 @@ test.describe("Navigation Guard - Once Option", () => {
     await page.waitForTimeout(500);
     await expect(page).toHaveURL("/");
   });
+
+  test("once handler after refresh - third back should navigate with screen update", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("link", { name: "Once Option" }).click();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
+
+    await page.reload();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
+    await page.waitForTimeout(500);
+
+    // First back: handler runs, shows modal, blocks (handler deleted after execution)
+    await page.goBack();
+    await expect(page.getByTestId("confirm-dialog-cancel")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("execution-count")).toHaveText("Handler executed: 1 time(s)");
+
+    // Second back: preRegisteredHandler closes modal, blocks
+    await page.goBack();
+    await expect(page.getByTestId("confirm-dialog-cancel")).not.toBeVisible({ timeout: 2000 });
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
+
+    // Third back: no handler, should navigate to home with BOTH URL and screen update
+    await page.goBack();
+    await page.waitForTimeout(1000);
+    await expect(page).toHaveURL("/");
+    await expect(page.getByRole("heading", { name: "next-page-router-back-navigation-guard Example" })).toBeVisible({ timeout: 5000 });
+  });
 });
 
 test.describe("Navigation Guard - Enable Option", () => {

@@ -137,8 +137,22 @@ function createPopstateHandler(
       // When handlerMap is empty (e.g., after once handler was deleted),
       // we still need to run preRegisteredHandler to handle overlay closures.
       // This is a synchronous fast-path that avoids the async handler chain.
+      //
+      // URL Restoration on Block:
+      // When preRegisteredHandler blocks (returns false), we MUST restore the URL
+      // with history.go(1). Without this, the browser URL changes to the previous
+      // page while Next.js still renders the current page, causing desync.
+      //
+      // Example scenario (once: true handler after refresh):
+      // 1. First back: handler runs, blocks, gets deleted (once: true)
+      // 2. Second back: no handlers, preRegisteredHandler closes modal, blocks
+      //    → Without history.go(1), browser URL is now at home page
+      // 3. Third back: browser tries to go before home → about:blank!
+      //
+      // With history.go(1), the URL is restored after step 2, so step 3 works correctly.
       if (!hasRegisteredHandlers(handlerMap)) {
         if (preRegisteredHandler && !preRegisteredHandler()) {
+          window.history.go(1);
           return false;
         }
         renderedStateContext.setStateAndSyncToHistory(
