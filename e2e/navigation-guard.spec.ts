@@ -31,7 +31,21 @@ test.describe("Navigation Guard - Basic Handler Test Page", () => {
 });
 
 test.describe("Navigation Guard - Once Option", () => {
-  test("handler should only execute once", async ({ page }) => {
+  test("handler should only execute once after allowing navigation", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("link", { name: "Once Option" }).click();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
+
+    await page.getByTestId("back-button").click();
+    await expect(page.getByTestId("confirm-dialog-confirm")).toBeVisible();
+    await expect(page.getByTestId("execution-count")).toHaveText("Handler executed: 1 time(s)");
+    await page.getByTestId("confirm-dialog-confirm").click();
+    await page.waitForTimeout(500);
+    
+    await expect(page).toHaveURL("/");
+  });
+
+  test("once handler should persist when blocking, second back closes modal, third back shows modal again", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("link", { name: "Once Option" }).click();
     await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
@@ -39,10 +53,17 @@ test.describe("Navigation Guard - Once Option", () => {
     await page.getByTestId("back-button").click();
     await expect(page.getByTestId("confirm-dialog-cancel")).toBeVisible();
     await expect(page.getByTestId("execution-count")).toHaveText("Handler executed: 1 time(s)");
-    await page.getByTestId("confirm-dialog-cancel").click();
-    await page.waitForTimeout(500);
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
+
+    await page.goBack();
+    await expect(page.getByTestId("confirm-dialog-cancel")).not.toBeVisible({ timeout: 2000 });
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
+    await expect(page.getByTestId("execution-count")).toHaveText("Handler executed: 1 time(s)");
 
     await page.getByTestId("back-button").click();
+    await expect(page.getByTestId("confirm-dialog-confirm")).toBeVisible();
+    await expect(page.getByTestId("execution-count")).toHaveText("Handler executed: 2 time(s)");
+    await page.getByTestId("confirm-dialog-confirm").click();
     await page.waitForTimeout(500);
     
     await expect(page).toHaveURL("/");

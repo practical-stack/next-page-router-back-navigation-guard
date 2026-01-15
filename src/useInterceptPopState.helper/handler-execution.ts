@@ -47,13 +47,15 @@ export async function runHandlerChainAndGetShouldAllowNavigation(
   if (firstHandler) {
     const shouldContinue = await firstHandler.callback({ to: destinationPath });
 
-    if (firstHandler.once) {
-      handlerMap.delete(firstHandler.id);
-    }
-
     if (!shouldContinue) {
       if (DEBUG) console.log(`[Handler] Cancelled by handler`);
       return false;
+    }
+
+    // Only remove 'once' handler after it allows navigation (returns true)
+    // If handler blocks (returns false), keep it registered for next back attempt
+    if (firstHandler.once) {
+      handlerMap.delete(firstHandler.id);
     }
   }
 
