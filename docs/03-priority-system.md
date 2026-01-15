@@ -237,6 +237,16 @@ Scenario:
 1. First back → handler shows dialog → user clicks "Cancel" → handler removed, navigation blocked
 2. Second back → no handler exists → navigation proceeds (or preRegisteredHandler runs if registered)
 
+**After page refresh (token mismatch scenario)**:
+
+When using `once: true` after a page refresh, the behavior involves both the handler and `preRegisteredHandler`:
+
+1. First back → handler runs, shows dialog, blocks → handler removed
+2. Second back → no handler, `preRegisteredHandler` closes dialog, blocks
+3. Third back → no handler, no dialog → navigation proceeds to previous page
+
+This works correctly because URL restoration happens at each step to keep browser and Next.js in sync.
+
 ### Combining Options
 
 ```tsx
