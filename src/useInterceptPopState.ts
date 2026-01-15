@@ -85,42 +85,45 @@ function hasTokenMismatch(token: string | undefined, currentToken: string): bool
 }
 
 // ============================================================================
-// Navigation Flags (Immutable State Management)
+// Interception State
 // ============================================================================
 
-interface NavigationFlagsState {
-  dispatchedState: unknown;
-  isRestoringFromTokenMismatch: boolean;
-  isAllowingNavigation: boolean;
+interface InterceptionState {
+  // URL 복원 중인지 (history.go(1) 호출 후 발생하는 popstate 무시용)
+  isRestoringUrl: boolean;
+  // 핸들러가 네비게이션을 승인했는지 (다음 popstate에서 통과시킬지)
+  isNavigationConfirmed: boolean;
 }
 
-function createNavigationFlags() {
-  let state: NavigationFlagsState = {
-    dispatchedState: null,
-    isRestoringFromTokenMismatch: false,
-    isAllowingNavigation: false,
-  };
-
-  const setState = (updates: Partial<NavigationFlagsState>) => {
-    state = { ...state, ...updates };
+function createInterceptionContext() {
+  let state: InterceptionState = {
+    isRestoringUrl: false,
+    isNavigationConfirmed: false,
   };
 
   return {
-    isRestoringFromMismatch: () => state.isRestoringFromTokenMismatch,
-    startMismatchRestoration: () => setState({ isRestoringFromTokenMismatch: true }),
-    clearMismatchRestoration: () => setState({ isRestoringFromTokenMismatch: false }),
+    get: () => ({ ...state }),
 
-    isNavigationAllowed: () => state.isAllowingNavigation,
-    allowNextNavigation: () => setState({ isAllowingNavigation: true }),
-    consumeNavigationAllowed: () => {
-      const wasAllowed = state.isAllowingNavigation;
-      setState({ isAllowingNavigation: false });
-      return wasAllowed;
+    // URL 복원 상태
+    // → true: history.go(1) 호출 직전 (다음 popstate 무시 필요)
+    // → false: 복원 완료 후
+    setRestoringUrl: (value: boolean) => {
+      state = { ...state, isRestoringUrl: value };
     },
 
-    isDispatched: (target: unknown) => target === state.dispatchedState,
-    markDispatched: (target: unknown) => setState({ dispatchedState: target }),
-    clearDispatched: () => setState({ dispatchedState: null }),
+    // 네비게이션 승인 상태
+    // → true: 핸들러가 true 반환 후, history.go/back 호출 직전
+    // → false: 다음 popstate에서 확인 후 소비
+    setNavigationConfirmed: (value: boolean) => {
+      state = { ...state, isNavigationConfirmed: value };
+    },
+
+    // 네비게이션 승인 상태를 읽고 소비 (읽은 후 false로 리셋)
+    consumeNavigationConfirmation: () => {
+      const wasConfirmed = state.isNavigationConfirmed;
+      state = { ...state, isNavigationConfirmed: false };
+      return wasConfirmed;
+    },
   };
 }
 
@@ -192,198 +195,121 @@ function computeRenderedStateWithIndex(current: RenderedState, nextIndex: number
 // Popstate Handler Factory
 // ============================================================================
 
-/**
- * Creates a popstate handler function that manages navigation blocking.
- *
- * @param handlerMap - Map of registered navigation handlers
- * @param writeState - Function to persist current state to history
- * @param preRegisteredHandler - Optional handler that runs before all others
- * @returns Handler function that returns true to allow navigation, false to block
- */
 function createHandlePopState(
   handlerMap: Map<string, HandlerDef>,
   writeState: () => void,
   preRegisteredHandler?: () => boolean
 ) {
-  const flags = createNavigationFlags();
+  const interception = createInterceptionContext();
   const handlerContext: HandlerContext = { handlerMap, preRegisteredHandler };
 
   return (nextState: any = {}): boolean => {
     const { token, nextIndex } = parseNavigationState(nextState);
+    const state = interception.get();
     const isTokenMismatch = hasTokenMismatch(token, renderedStateRef.current.token!);
+    const delta = nextIndex - renderedStateRef.current.index;
 
-    // [Allowing Navigation] Handler already confirmed, let it through
-    if (flags.isNavigationAllowed()) {
-      if (DEBUG) console.log(`[AllowingNavigation] Allowing navigation (handler confirmed)`);
-      flags.consumeNavigationAllowed();
+    // ========================================
+    // 이미 승인된 네비게이션
+    // ========================================
+    if (state.isNavigationConfirmed) {
+      if (DEBUG) console.log(`[Confirmed] Navigation confirmed by handler`);
+      interception.consumeNavigationConfirmation();
       renderedStateRef.current = computeRenderedState(token, nextIndex);
       writeState();
       return true;
     }
 
     // ========================================
-    // [Token Mismatch Path]
-    // Covers: page refresh, external domain entry, direct URL entry
+    // Token Mismatch (새로고침, 외부 진입)
     // ========================================
     if (isTokenMismatch) {
-      return handleTokenMismatch({
-        flags,
-        handlerContext,
-        token,
-        nextIndex,
-        writeState,
-      });
+      // URL 복원 중 → 무시
+      if (state.isRestoringUrl) {
+        if (DEBUG) console.log(`[TokenMismatch] Ignoring (restoring URL)`);
+        interception.setRestoringUrl(false);
+        return false;
+      }
+
+      if (DEBUG) console.log(`[TokenMismatch] Detected (current: ${renderedStateRef.current.token}, next: ${token})`);
+
+      // 핸들러 없음 → 허용
+      if (!hasRegisteredHandlers(handlerMap)) {
+        renderedStateRef.current = computeRenderedState(token, nextIndex);
+        writeState();
+        return true;
+      }
+
+      // URL 복원 후 핸들러 실행
+      if (DEBUG) console.log(`[TokenMismatch] Restoring URL with history.go(1)`);
+      interception.setRestoringUrl(true);
+      window.history.go(1);
+
+      setTimeout(async () => {
+        interception.setRestoringUrl(false);
+        const shouldNavigate = await runHandlerChain(handlerContext, "");
+        if (shouldNavigate) {
+          if (DEBUG) console.log(`[TokenMismatch] Handler confirmed`);
+          renderedStateRef.current = computeRenderedState(token, nextIndex);
+          writeState();
+          interception.setNavigationConfirmed(true);
+          window.history.back();
+        } else {
+          if (DEBUG) console.log(`[TokenMismatch] Handler blocked`);
+        }
+      }, 0);
+      return false;
     }
 
     // ========================================
-    // [Internal Navigation Path]
-    // Normal back/forward navigation within app
+    // Internal Navigation (일반 뒤로/앞으로)
     // ========================================
-    return handleInternalNavigation({
-      flags,
-      handlerContext,
-      nextState,
-      nextIndex,
-    });
+
+    // delta === 0: 복원으로 발생한 중복 popstate → 무시
+    if (delta === 0) {
+      if (DEBUG) console.log(`[Internal] Ignoring (delta is 0)`);
+      interception.setRestoringUrl(false);
+      return false;
+    }
+
+    // 앞으로 가기 → 항상 허용
+    if (delta > 0) {
+      if (DEBUG) console.log(`[Internal] Forward navigation (delta: ${delta})`);
+      renderedStateRef.current = computeRenderedStateWithIndex(renderedStateRef.current, nextIndex);
+      return true;
+    }
+
+    if (DEBUG) console.log(`[Internal] Back navigation (delta: ${delta})`);
+
+    // 핸들러가 이미 승인함 → 통과
+    if (interception.consumeNavigationConfirmation()) {
+      if (DEBUG) console.log(`[Internal] Already confirmed`);
+      renderedStateRef.current = computeRenderedStateWithIndex(renderedStateRef.current, nextIndex);
+      return true;
+    }
+
+    // 핸들러 없음 → 허용
+    if (!hasRegisteredHandlers(handlerMap)) {
+      if (DEBUG) console.log(`[Internal] No handlers`);
+      renderedStateRef.current = computeRenderedStateWithIndex(renderedStateRef.current, nextIndex);
+      return true;
+    }
+
+    // URL 복원 후 핸들러 실행
+    if (DEBUG) console.log(`[Internal] Restoring URL with history.go(${-delta})`);
+    window.history.go(-delta);
+
+    (async () => {
+      const to = location.pathname + location.search;
+      const shouldNavigate = await runHandlerChain(handlerContext, to);
+      if (shouldNavigate) {
+        if (DEBUG) console.log(`[Internal] Handler confirmed`);
+        interception.setNavigationConfirmed(true);
+        window.history.go(delta);
+      } else {
+        if (DEBUG) console.log(`[Internal] Handler blocked`);
+      }
+    })();
+    return false;
   };
-}
-
-// ============================================================================
-// Token Mismatch Handling
-// ============================================================================
-
-interface TokenMismatchParams {
-  flags: ReturnType<typeof createNavigationFlags>;
-  handlerContext: HandlerContext;
-  token: string | undefined;
-  nextIndex: number;
-  writeState: () => void;
-}
-
-function handleTokenMismatch({
-  flags,
-  handlerContext,
-  token,
-  nextIndex,
-  writeState,
-}: TokenMismatchParams): boolean {
-  // Ignore popstate triggered by our URL restoration (history.go(1))
-  if (flags.isRestoringFromMismatch()) {
-    flags.clearMismatchRestoration();
-    if (DEBUG) console.log(`[TokenMismatch] Ignoring restoration popstate`);
-    return false;
-  }
-
-  if (DEBUG) {
-    console.log(
-      `[TokenMismatch] Token mismatch detected (current: ${renderedStateRef.current.token}, next: ${token})`
-    );
-  }
-
-  // No handlers registered, allow navigation immediately
-  if (!hasRegisteredHandlers(handlerContext.handlerMap)) {
-    renderedStateRef.current = computeRenderedState(token, nextIndex);
-    writeState();
-    return true;
-  }
-
-  if (DEBUG) console.log(`[TokenMismatch] Blocking and restoring URL with history.go(1)`);
-
-  // Mark restoration in progress and restore URL
-  flags.startMismatchRestoration();
-  window.history.go(1);
-
-  // Run handlers asynchronously after URL is restored
-  setTimeout(async () => {
-    // Reset flag - history.go(1) popstate doesn't always trigger beforePopState
-    flags.clearMismatchRestoration();
-
-    const shouldNavigate = await runHandlerChain(handlerContext, "");
-
-    if (shouldNavigate) {
-      if (DEBUG) console.log(`[TokenMismatch] Allowing navigation with history.back()`);
-      renderedStateRef.current = computeRenderedState(token, nextIndex);
-      writeState();
-      flags.allowNextNavigation();
-      window.history.back();
-    } else {
-      if (DEBUG) console.log(`[TokenMismatch] Navigation blocked by handler`);
-    }
-  }, 0);
-
-  return false;
-}
-
-// ============================================================================
-// Internal Navigation Handling
-// ============================================================================
-
-interface InternalNavigationParams {
-  flags: ReturnType<typeof createNavigationFlags>;
-  handlerContext: HandlerContext;
-  nextState: any;
-  nextIndex: number;
-}
-
-function handleInternalNavigation({
-  flags,
-  handlerContext,
-  nextState,
-  nextIndex,
-}: InternalNavigationParams): boolean {
-  const delta = nextIndex - renderedStateRef.current.index;
-
-  // Ignore duplicate popstate (triggered by our history.go(-delta) restoration)
-  if (delta === 0) {
-    if (DEBUG) console.log(`[Internal] Ignoring restoration popstate (delta is 0)`);
-    flags.clearMismatchRestoration(); // Defensive reset
-    return false;
-  }
-
-  // Forward navigation - always allowed
-  const isBackNavigation = delta < 0;
-  if (!isBackNavigation) {
-    if (DEBUG) console.log(`[Internal] Allowing forward navigation (delta: ${delta})`);
-    renderedStateRef.current = computeRenderedStateWithIndex(renderedStateRef.current, nextIndex);
-    return true;
-  }
-
-  if (DEBUG) console.log(`[Internal] Back navigation detected (delta: ${delta})`);
-
-  // Check if handler already confirmed navigation
-  if (flags.consumeNavigationAllowed()) {
-    if (DEBUG) console.log(`[Internal] Allowing navigation (async handler confirmed)`);
-    renderedStateRef.current = computeRenderedStateWithIndex(renderedStateRef.current, nextIndex);
-    return true;
-  }
-
-  // Check if this is a re-dispatched popstate or no guards registered
-  if (flags.isDispatched(nextState) || !hasRegisteredHandlers(handlerContext.handlerMap)) {
-    if (DEBUG) console.log(`[Internal] Allowing navigation (re-dispatched or no guards)`);
-    flags.clearDispatched();
-    renderedStateRef.current = computeRenderedStateWithIndex(renderedStateRef.current, nextIndex);
-    return true;
-  }
-
-  if (DEBUG) console.log(`[Internal] Blocking and restoring URL with history.go(${-delta})`);
-
-  // Restore URL
-  window.history.go(-delta);
-
-  // Run handlers asynchronously
-  (async () => {
-    const to = location.pathname + location.search;
-    const shouldNavigate = await runHandlerChain(handlerContext, to);
-
-    if (shouldNavigate) {
-      if (DEBUG) console.log(`[Internal] Allowing navigation with history.go(${delta})`);
-      flags.allowNextNavigation();
-      window.history.go(delta);
-    } else {
-      if (DEBUG) console.log(`[Internal] Navigation blocked by handler`);
-    }
-  })();
-
-  // Return false to block Next.js state update
-  return false;
 }
