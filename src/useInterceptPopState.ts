@@ -4,6 +4,7 @@ import { HandlerDef } from "./@shared/types";
 import { DEBUG } from "./@shared/debug";
 import { useIsomorphicLayoutEffect } from "./@shared/useIsomorphicLayoutEffect";
 
+import type { NextHistoryState } from "./useInterceptPopState.helper/types";
 import { createInterceptionStateContext } from "./useInterceptPopState.helper/interception-state";
 import {
   createRenderedStateContext,
@@ -19,6 +20,8 @@ import {
   runHandlerChainAndGetShouldAllowNavigation,
   hasRegisteredHandlers,
 } from "./useInterceptPopState.helper/handler-execution";
+
+type PopstateHandler = (historyState: NextHistoryState) => boolean;
 
 export function useInterceptPopState({
   handlerMap,
@@ -48,17 +51,17 @@ export function useInterceptPopState({
 function createPopstateHandler(
   handlerMap: Map<string, HandlerDef>,
   preRegisteredHandler?: () => boolean
-) {
+): PopstateHandler {
   const renderedStateContext = createRenderedStateContext();
   const interceptionStateContext = createInterceptionStateContext();
   const handlerContext: HandlerContext = { handlerMap, preRegisteredHandler };
 
-  return (historyState: any = {}): boolean => {
+  return (historyState: NextHistoryState = {}): boolean => {
     const { nextSessionToken, nextHistoryIndex } = parseHistoryState(historyState);
     const currentRenderedState = renderedStateContext.getState();
     const isSessionTokenMismatch = hasSessionTokenMismatch(
       nextSessionToken,
-      currentRenderedState.sessionToken!
+      currentRenderedState.sessionToken
     );
     const historyIndexDelta = nextHistoryIndex - currentRenderedState.historyIndex;
 
@@ -137,15 +140,6 @@ function createPopstateHandler(
     }
 
     if (DEBUG) console.log(`[Internal] Back navigation (historyIndexDelta: ${historyIndexDelta})`);
-
-    if (interceptionStateContext.getState().isNavigationConfirmed) {
-      interceptionStateContext.setState({ isNavigationConfirmed: false });
-      if (DEBUG) console.log(`[Internal] Already confirmed`);
-      renderedStateContext.setState(
-        computeRenderedStateWithNextHistoryIndex(currentRenderedState, nextHistoryIndex)
-      );
-      return true;
-    }
 
     if (!hasRegisteredHandlers(handlerMap)) {
       if (DEBUG) console.log(`[Internal] No handlers`);
