@@ -134,15 +134,19 @@ function createPopstateHandler(
         );
       }
 
-      // No handlers registered - allow navigation immediately
+      // When handlerMap is empty (e.g., after once handler was deleted),
+      // we still need to run preRegisteredHandler to handle overlay closures.
+      // This is a synchronous fast-path that avoids the async handler chain.
       if (!hasRegisteredHandlers(handlerMap)) {
+        if (preRegisteredHandler && !preRegisteredHandler()) {
+          return false;
+        }
         renderedStateContext.setStateAndSyncToHistory(
           computeNextRenderedState(nextSessionToken, nextHistoryIndex)
         );
         return true;
       }
 
-      // Restore URL first, then run handlers asynchronously
       if (DEBUG) console.log(`[SessionTokenMismatch] Restoring URL with history.go(1)`);
       interceptionStateContext.setState({ isRestoringUrl: true });
       window.history.go(1);
@@ -190,8 +194,16 @@ function createPopstateHandler(
     // Back navigation - this is what we guard
     if (DEBUG) console.log(`[Internal] Back navigation (historyIndexDelta: ${historyIndexDelta})`);
 
-    // No handlers registered - allow navigation immediately
+    // When handlerMap is empty (e.g., after once handler was deleted),
+    // we still need to run preRegisteredHandler to handle overlay closures.
+    // Unlike the session token mismatch case, here we must restore the URL
+    // if preRegisteredHandler blocks, because the browser has already navigated.
     if (!hasRegisteredHandlers(handlerMap)) {
+      if (preRegisteredHandler && !preRegisteredHandler()) {
+        // Restore URL: browser already moved back, push forward to stay on current page
+        window.history.go(-historyIndexDelta);
+        return false;
+      }
       if (DEBUG) console.log(`[Internal] No handlers`);
       renderedStateContext.setState(
         computeRenderedStateWithNextHistoryIndex(currentRenderedState, nextHistoryIndex)
