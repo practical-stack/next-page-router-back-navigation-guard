@@ -138,6 +138,18 @@ export function useRegisterBackNavigationHandler(
 ) {
   const callbackId = useId();
   const handlerMap = useContext(BackNavigationHandlerContext);
+
+  // Tracks whether the handler has been executed (for once: true handlers).
+  // This ref complements the handlerMap.delete() in handler-execution.ts:
+  // - handlerMap.delete() removes the handler from the map immediately
+  // - hasExecutedRef prevents re-registration on subsequent React re-renders
+  //
+  // Why both are needed:
+  // 1. handlerMap.delete() alone is not enough because React may re-render
+  //    the component (due to state changes in the handler callback),
+  //    causing useIsomorphicLayoutEffect to run again and re-register the handler.
+  // 2. hasExecutedRef persists across renders and blocks re-registration
+  //    when the effect's skip condition checks: (resolvedOptions.once && hasExecutedRef.current)
   const hasExecutedRef = useRef(false);
 
   if (!handlerMap) {
@@ -177,11 +189,11 @@ export function useRegisterBackNavigationHandler(
       id: callbackId,
       callback: async (params) => {
         debug(`Back navigation handler called:`, params);
-        const result = await handler();
-        if (result) {
-          hasExecutedRef.current = true;
-        }
-        return result;
+        // Set BEFORE calling handler to prevent re-registration during handler execution.
+        // Handler may trigger state updates → React re-render → effect re-runs.
+        // If hasExecutedRef.current is true, the effect's skip condition prevents re-registration.
+        hasExecutedRef.current = true;
+        return handler();
       },
       override: resolvedOptions.override,
       overridePriority: resolvedOptions.override ? resolvedOptions.overridePriority : 1,

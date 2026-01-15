@@ -45,7 +45,7 @@ test.describe("Navigation Guard - Once Option", () => {
     await expect(page).toHaveURL("/");
   });
 
-  test("once handler should persist when blocking, second back closes modal, third back shows modal again", async ({ page }) => {
+  test("once handler should not run again after first execution, even when blocking", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("link", { name: "Once Option" }).click();
     await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
@@ -61,11 +61,7 @@ test.describe("Navigation Guard - Once Option", () => {
     await expect(page.getByTestId("execution-count")).toHaveText("Handler executed: 1 time(s)");
 
     await page.getByTestId("back-button").click();
-    await expect(page.getByTestId("confirm-dialog-confirm")).toBeVisible();
-    await expect(page.getByTestId("execution-count")).toHaveText("Handler executed: 2 time(s)");
-    await page.getByTestId("confirm-dialog-confirm").click();
     await page.waitForTimeout(500);
-    
     await expect(page).toHaveURL("/");
   });
 });
