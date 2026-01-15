@@ -235,6 +235,98 @@ test.describe("Navigation Guard - Browser Back Button", () => {
   });
 });
 
+test.describe("Navigation Guard - Redirect on Back", () => {
+  test("should redirect to /once when back button is pressed via router.back()", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("link", { name: "Redirect on Back" }).click();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: redirect");
+
+    await page.getByTestId("back-button").click();
+
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL("/once");
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
+  });
+
+  test("should redirect to /once when browser back button is pressed", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("link", { name: "Redirect on Back" }).click();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: redirect");
+
+    await page.goBack();
+
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL("/once");
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
+  });
+
+  test("should return to /redirect after redirecting to /once and pressing back 3 times", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("link", { name: "Redirect on Back" }).click();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: redirect");
+
+    await page.getByTestId("back-button").click();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL("/once");
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
+
+    await page.goBack();
+    await page.waitForTimeout(500);
+
+    await page.goBack();
+    await page.waitForTimeout(500);
+
+    await page.goBack();
+    await page.waitForTimeout(500);
+
+    await expect(page).toHaveURL("/redirect");
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: redirect");
+  });
+
+  test("should redirect to /once after refresh when back button is pressed", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("link", { name: "Redirect on Back" }).click();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: redirect");
+
+    await page.reload();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: redirect");
+    await page.waitForTimeout(500);
+
+    await page.goBack();
+
+    await page.waitForTimeout(1000);
+    await expect(page).toHaveURL("/once");
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
+  });
+
+  test("should return to /redirect after refresh, redirect to /once, and pressing back 3 times", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("link", { name: "Redirect on Back" }).click();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: redirect");
+
+    await page.reload();
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: redirect");
+    await page.waitForTimeout(500);
+
+    await page.goBack();
+    await page.waitForTimeout(1000);
+    await expect(page).toHaveURL("/once");
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: once");
+
+    await page.goBack();
+    await page.waitForTimeout(500);
+
+    await page.goBack();
+    await page.waitForTimeout(500);
+
+    await page.goBack();
+    await page.waitForTimeout(500);
+
+    await expect(page).toHaveURL("/redirect");
+    await expect(page.getByTestId("page-indicator")).toHaveText("Current Page: redirect");
+  });
+});
+
 test.describe("Navigation Guard - After Refresh (Token Mismatch)", () => {
 
   test("should allow navigation after refresh when dialog is confirmed", async ({ page }) => {
