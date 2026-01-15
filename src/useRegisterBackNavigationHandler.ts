@@ -175,10 +175,13 @@ export function useRegisterBackNavigationHandler(
 
     handlerMap.set(callbackId, {
       id: callbackId,
-      callback: (params) => {
+      callback: async (params) => {
         debug(`Back navigation handler called:`, params);
-        hasExecutedRef.current = true;
-        return handler();
+        const result = await handler();
+        if (result) {
+          hasExecutedRef.current = true;
+        }
+        return result;
       },
       override: resolvedOptions.override,
       overridePriority: resolvedOptions.override ? resolvedOptions.overridePriority : 1,
