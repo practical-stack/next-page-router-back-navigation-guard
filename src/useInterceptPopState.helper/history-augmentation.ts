@@ -82,8 +82,8 @@ export function initializeHistoryStateSyncOnce(): {
 
   // Initialize state from existing history.state (if available)
   setRenderedState({
-    historyIndex: parseInt(window.history.state.__next_navigation_stack_index) || 0,
-    sessionToken: String(window.history.state.__next_session_token ?? "") || generateSessionToken(),
+    historyIndex: parseInt(String(window.history.state?.__next_navigation_stack_index ?? "0"), 10) || 0,
+    sessionToken: String(window.history.state?.__next_session_token ?? "") || generateSessionToken(),
   });
 
   if (DEBUG) {
@@ -128,6 +128,7 @@ export function initializeHistoryStateSyncOnce(): {
 
   // Sync initial state to history if not already present
   if (
+    !window.history.state ||
     window.history.state.__next_navigation_stack_index == null ||
     window.history.state.__next_session_token == null
   ) {
@@ -163,9 +164,7 @@ export function initializeHistoryStateSyncOnce(): {
       ? currentRenderedState
       : { sessionToken: generateSessionToken(), historyIndex: 0 };
 
-    if (nextRenderedState !== currentRenderedState) {
-      setRenderedState(nextRenderedState);
-    }
+    setRenderedState(nextRenderedState);
 
     if (DEBUG) {
       console.log(`history.replaceState: historyIndex=${nextRenderedState.historyIndex}, sessionToken=${nextRenderedState.sessionToken}`);
