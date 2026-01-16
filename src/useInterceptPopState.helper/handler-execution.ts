@@ -3,6 +3,27 @@
  *
  * Executes registered navigation handlers in priority order.
  * Handlers can be async and return boolean to allow/block navigation.
+ *
+ * ## once Option Behavior
+ *
+ * When a handler has `once: true`, it is removed from the handlerMap BEFORE execution.
+ * This ensures the handler runs exactly once, regardless of its return value.
+ *
+ * Key design decision: "once" means "execute once", not "allow navigation once".
+ *
+ * Example scenario with once: true handler:
+ * 1. First back press → handler executes, shows dialog, returns false (blocks)
+ *    → handler is already removed from map
+ * 2. Second back press → preRegisteredHandler closes dialog
+ * 3. Third back press → no handler exists, navigation proceeds
+ *
+ * If handler was only removed on `return true`, the scenario would be:
+ * 1. First back → handler blocks (returns false) → stays registered
+ * 2. Second back → preRegisteredHandler closes dialog
+ * 3. Third back → handler runs AGAIN (unexpected!)
+ *
+ * The current implementation prevents this confusion by removing the handler
+ * immediately upon execution, before awaiting its result.
  */
 
 import { HandlerDef } from "../@shared/types";
@@ -45,11 +66,15 @@ export async function runHandlerChainAndGetShouldAllowNavigation(
   const firstHandler = sortedHandlers[0];
 
   if (firstHandler) {
-    const shouldContinue = await firstHandler.callback({ to: destinationPath });
-
+    // IMPORTANT: Delete BEFORE execution to prevent race conditions with React re-renders.
+    // If deleted after execution, a re-render during async callback could re-register
+    // the handler before deletion occurs, causing it to run multiple times.
+    // See: useRegisterBackNavigationHandler.ts hasExecutedRef for the complementary guard.
     if (firstHandler.once) {
       handlerMap.delete(firstHandler.id);
     }
+
+    const shouldContinue = await firstHandler.callback({ to: destinationPath });
 
     if (!shouldContinue) {
       if (DEBUG) console.log(`[Handler] Cancelled by handler`);
@@ -60,10 +85,6 @@ export async function runHandlerChainAndGetShouldAllowNavigation(
   return true;
 }
 
-/**
- * Checks if there are any registered handlers.
- * Used to skip handler execution logic when no handlers exist.
- */
 export function hasRegisteredHandlers(handlerMap: Map<string, HandlerDef>): boolean {
   return handlerMap.size > 0;
 }

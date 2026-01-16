@@ -201,7 +201,7 @@ useRegisterBackNavigationHandler(
 
 ### once Option
 
-Handler auto-unregisters after one execution.
+Handler auto-unregisters after one execution, **regardless of return value**.
 
 ```tsx
 useRegisterBackNavigationHandler(
@@ -212,6 +212,40 @@ useRegisterBackNavigationHandler(
   { once: true }
 );
 ```
+
+**Important**: The handler is removed immediately upon execution, not upon allowing navigation.
+
+| Scenario | Handler returns | Handler after execution |
+|----------|-----------------|-------------------------|
+| User confirms | `true` (allow) | Removed |
+| User cancels | `false` (block) | Removed |
+
+**Example with dialog**:
+
+```tsx
+useRegisterBackNavigationHandler(
+  () => {
+    // Shows confirm dialog
+    // Handler is ALREADY REMOVED when this function starts executing
+    return window.confirm("Leave page?");
+  },
+  { once: true }
+);
+```
+
+Scenario:
+1. First back → handler shows dialog → user clicks "Cancel" → handler removed, navigation blocked
+2. Second back → no handler exists → navigation proceeds (or preRegisteredHandler runs if registered)
+
+**After page refresh (token mismatch scenario)**:
+
+When using `once: true` after a page refresh, the behavior involves both the handler and `preRegisteredHandler`:
+
+1. First back → handler runs, shows dialog, blocks → handler removed
+2. Second back → no handler, `preRegisteredHandler` closes dialog, blocks
+3. Third back → no handler, no dialog → navigation proceeds to previous page
+
+This works correctly because URL restoration happens at each step to keep browser and Next.js in sync.
 
 ### Combining Options
 
@@ -250,14 +284,19 @@ Back Navigation Triggered
         │
         ▼
 ┌─────────────────────────────────────┐
-│ 3. Execute first handler            │
+│ 3. Delete handler if once: true     │
+│    (removed BEFORE execution)       │
+└─────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────┐
+│ 4. Execute first handler            │
 │    → Block if returns false         │
-│    → Delete if once: true           │
 └─────────────────────────────────────┘
         │ returns true
         ▼
 ┌─────────────────────────────────────┐
-│ 4. Allow navigation                 │
+│ 5. Allow navigation                 │
 └─────────────────────────────────────┘
 ```
 

@@ -59,12 +59,14 @@ useRegisterBackNavigationHandler(
     return window.confirm("Leave page?");
   },
   {
-    once: false,      // If true, handler executes once then unregisters
+    once: false,      // If true, handler executes once then unregisters (regardless of return value)
     enable: true,     // If false, handler is not registered
     override: false,  // If true, handler has priority over non-override handlers
   }
 );
 ```
+
+> **Note on `once` option**: When `once: true`, the handler is removed immediately upon execution, regardless of whether it returns `true` or `false`. This means "execute exactly once", not "allow navigation once".
 
 ### `BackNavigationHandlerProvider`
 

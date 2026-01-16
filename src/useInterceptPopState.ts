@@ -134,15 +134,33 @@ function createPopstateHandler(
         );
       }
 
-      // No handlers registered - allow navigation immediately
+      // When handlerMap is empty (e.g., after once handler was deleted),
+      // we still need to run preRegisteredHandler to handle overlay closures.
+      // This is a synchronous fast-path that avoids the async handler chain.
+      //
+      // URL Restoration on Block:
+      // When preRegisteredHandler blocks (returns false), we MUST restore the URL
+      // with history.go(1). Without this, the browser URL changes to the previous
+      // page while Next.js still renders the current page, causing desync.
+      //
+      // Example scenario (once: true handler after refresh):
+      // 1. First back: handler runs, blocks, gets deleted (once: true)
+      // 2. Second back: no handlers, preRegisteredHandler closes modal, blocks
+      //    → Without history.go(1), browser URL is now at home page
+      // 3. Third back: browser tries to go before home → about:blank!
+      //
+      // With history.go(1), the URL is restored after step 2, so step 3 works correctly.
       if (!hasRegisteredHandlers(handlerMap)) {
+        if (preRegisteredHandler && !preRegisteredHandler()) {
+          window.history.go(1);
+          return false;
+        }
         renderedStateContext.setStateAndSyncToHistory(
           computeNextRenderedState(nextSessionToken, nextHistoryIndex)
         );
         return true;
       }
 
-      // Restore URL first, then run handlers asynchronously
       if (DEBUG) console.log(`[SessionTokenMismatch] Restoring URL with history.go(1)`);
       interceptionStateContext.setState({ isRestoringUrl: true });
       window.history.go(1);
@@ -190,8 +208,16 @@ function createPopstateHandler(
     // Back navigation - this is what we guard
     if (DEBUG) console.log(`[Internal] Back navigation (historyIndexDelta: ${historyIndexDelta})`);
 
-    // No handlers registered - allow navigation immediately
+    // When handlerMap is empty (e.g., after once handler was deleted),
+    // we still need to run preRegisteredHandler to handle overlay closures.
+    // Unlike the session token mismatch case, here we must restore the URL
+    // if preRegisteredHandler blocks, because the browser has already navigated.
     if (!hasRegisteredHandlers(handlerMap)) {
+      if (preRegisteredHandler && !preRegisteredHandler()) {
+        // Restore URL: browser already moved back, push forward to stay on current page
+        window.history.go(-historyIndexDelta);
+        return false;
+      }
       if (DEBUG) console.log(`[Internal] No handlers`);
       renderedStateContext.setState(
         computeRenderedStateWithNextHistoryIndex(currentRenderedState, nextHistoryIndex)

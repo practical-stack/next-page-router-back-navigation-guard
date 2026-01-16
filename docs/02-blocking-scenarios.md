@@ -238,6 +238,46 @@ Check isRestoringFromTokenMismatch
 If true → Clear flag and ignore event
 ```
 
+### Scenario 8: Once Handler After Refresh (Empty HandlerMap with preRegisteredHandler)
+
+When a `once: true` handler is deleted after execution, subsequent back navigations may have no handlers in the map but still need to run `preRegisteredHandler`.
+
+```
+Page refresh with once: true handler
+    │
+    ▼
+First back → handler runs, shows dialog, blocks
+    │         handler deleted (once: true)
+    │
+    ▼
+Second back → Token mismatch, handlerMap is EMPTY
+    │
+    ▼
+preRegisteredHandler runs (closes modal) → blocks
+    │
+    ▼
+URL restoration: history.go(1) ← CRITICAL!
+    │
+    ▼
+Third back → Token mismatch, no handlers, no overlay
+    │
+    ▼
+Allow navigation → Navigate to previous page
+```
+
+**Why URL Restoration is Critical**:
+
+Without `history.go(1)` in step 2:
+- Browser URL changes to previous page (popstate already fired)
+- But we return `false`, so Next.js stays on current page
+- Browser URL and Next.js state are now **desynchronized**
+- Third back tries to go before the first history entry → `about:blank`
+
+With `history.go(1)`:
+- URL is restored to current page after preRegisteredHandler blocks
+- Browser and Next.js stay synchronized
+- Third back correctly navigates to the previous page
+
 ---
 
 ## Complete Flow Diagram

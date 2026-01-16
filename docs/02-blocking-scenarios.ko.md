@@ -238,6 +238,46 @@ Check isRestoringFromTokenMismatch
 If true → Clear flag and ignore event
 ```
 
+### 시나리오 8: 새로고침 후 Once 핸들러 (빈 HandlerMap + preRegisteredHandler)
+
+`once: true` 핸들러가 실행 후 삭제되면, 이후 뒤로가기에서 handlerMap이 비어있지만 여전히 `preRegisteredHandler`를 실행해야 합니다.
+
+```
+once: true 핸들러가 있는 페이지 새로고침
+    │
+    ▼
+첫 번째 뒤로가기 → 핸들러 실행, 다이얼로그 표시, 차단
+    │                핸들러 삭제됨 (once: true)
+    │
+    ▼
+두 번째 뒤로가기 → Token mismatch, handlerMap 비어있음
+    │
+    ▼
+preRegisteredHandler 실행 (모달 닫음) → 차단
+    │
+    ▼
+URL 복원: history.go(1) ← 핵심!
+    │
+    ▼
+세 번째 뒤로가기 → Token mismatch, 핸들러 없음, 오버레이 없음
+    │
+    ▼
+네비게이션 허용 → 이전 페이지로 이동
+```
+
+**URL 복원이 중요한 이유**:
+
+2단계에서 `history.go(1)` 없이:
+- 브라우저 URL이 이전 페이지로 변경됨 (popstate 이미 발생)
+- 하지만 `false` 반환으로 Next.js는 현재 페이지 유지
+- 브라우저 URL과 Next.js 상태가 **동기화되지 않음**
+- 세 번째 뒤로가기가 첫 번째 히스토리 항목 이전으로 가려함 → `about:blank`
+
+`history.go(1)` 사용 시:
+- preRegisteredHandler 차단 후 현재 페이지로 URL 복원
+- 브라우저와 Next.js 동기화 유지
+- 세 번째 뒤로가기가 올바르게 이전 페이지로 이동
+
 ---
 
 ## 전체 흐름도
