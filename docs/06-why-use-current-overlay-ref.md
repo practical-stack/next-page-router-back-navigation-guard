@@ -1,12 +1,12 @@
-# useCurrentOverlayRef 패턴 설명
+# Why useCurrentOverlayRef Pattern
 
-## 요약
+## Summary
 
-`preRegisteredHandler`는 반드시 stable reference를 유지해야 합니다. 그렇지 않으면 라이브러리 내부의 `isNavigationConfirmed` 플래그가 초기화되어 async 핸들러가 "Leave"를 클릭해도 네비게이션이 차단됩니다.
+`preRegisteredHandler` must maintain a stable reference. Otherwise, the library's internal `isNavigationConfirmed` flag gets reset, causing navigation to be blocked even when the user clicks "Leave" in an async handler.
 
 ---
 
-## 라이브러리 코드 구조
+## Library Code Structure
 
 ```typescript
 // useInterceptPopState.ts
@@ -30,12 +30,12 @@ export function useInterceptPopState({
     return () => {
       pagesRouter.beforePopState(() => true);
     };
-  }, [pagesRouter, preRegisteredHandler]);  // ← preRegisteredHandler가 deps에 있음
+  }, [pagesRouter, preRegisteredHandler]);  // ← preRegisteredHandler is in deps
 }
 
 function createPopstateHandler(...) {
-  const interceptionStateContext = createInterceptionStateContext();  // ← 상태가 여기서 생성됨!
-  // interceptionStateContext 내부에 isNavigationConfirmed 등의 상태가 캡슐화됨
+  const interceptionStateContext = createInterceptionStateContext();  // ← State created here!
+  // interceptionStateContext encapsulates isNavigationConfirmed and other state
 
   return (historyState) => {
     // ...
@@ -56,38 +56,92 @@ function createPopstateHandler(...) {
 
 ---
 
-## 정상 동작 (stable `preRegisteredHandler`)
+## Normal Operation (stable `preRegisteredHandler`)
 
 ```
-시간 →
+Time →
 
-[T0] 유저가 뒤로가기 클릭
+[T0] User clicks back button
      │
      ▼
-[T1] popstateHandler_A 호출 (state_A.isNavigationConfirmed = false)
+[T1] popstateHandler_A called (state_A.isNavigationConfirmed = false)
      │
      ▼
-[T2] 다이얼로그 표시, 유저 입력 대기...
+[T2] Dialog shown, waiting for user input...
      │
      ▼
-[T3] 유저가 "Leave" 클릭
+[T3] User clicks "Leave"
      │
      ▼
-[T4] state_A.isNavigationConfirmed = true 설정
+[T4] state_A.isNavigationConfirmed = true set
      │
      ▼
-[T5] history.go(delta) 호출
+[T5] history.go(delta) called
      │
      ▼
-[T6] 새 popstate 발생 → popstateHandler_A 호출
+[T6] New popstate fired → popstateHandler_A called
      │
      ▼
-[T7] state_A.isNavigationConfirmed === true → 네비게이션 허용 ✅
+[T7] state_A.isNavigationConfirmed === true → Navigation allowed ✅
+```
+
+**Key:** Same `popstateHandler_A` instance is used throughout, so `state_A` is preserved.
+
+---
+
+## Problem Scenario (when `preRegisteredHandler` changes)
+
+Without `useCallback` or with `[currentOverlay]` deps:
+
+```tsx
+// preRegisteredHandler recreated on every render or currentOverlay change
+const preRegisteredHandler = () => {
+  if (currentOverlay) { ... }
+};
+```
+
+```
+Time →
+
+[T0] User clicks back button
+     │
+     ▼
+[T1] popstateHandler_A called (state_A: isNavigationConfirmed = false)
+     │
+     ▼
+[T2] Dialog shown → currentOverlay changed!
+     │
+     ▼
+[T2.1] _app re-renders → preRegisteredHandler recreated as new function
+     │
+     ▼
+[T2.2] Effect re-runs:
+       ┌───────────────────────────────────────────────────────┐
+       │ cleanup: popstateHandler_A released                   │
+       │ setup:   popstateHandler_B newly created              │
+       │          (state_B: isNavigationConfirmed = false)     │  ← New state!
+       └───────────────────────────────────────────────────────┘
+     │
+     ▼
+[T3] User clicks "Leave"
+     │
+     ▼
+[T4] state_A.isNavigationConfirmed = true set
+     │  (but popstateHandler_A is already released!)
+     │
+     ▼
+[T5] history.go(delta) called
+     │
+     ▼
+[T6] New popstate fired → popstateHandler_B called (currently registered handler)
+     │
+     ▼
+[T7] state_B.isNavigationConfirmed === false → Navigation blocked! ❌
 ```
 
 ---
 
-## 시각적 비교
+## Visual Comparison
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -99,32 +153,32 @@ function createPopstateHandler(...) {
 │  │ state_A.isNavigationConfirmed = false → true                │   │
 │  │                                   ↑                         │   │
 │  │ [T1]                           [T4]                   [T7]  │   │
-│  │  호출 ────────────────────────  설정 ─────────────────  확인 │   │
+│  │  call ─────────────────────────  set ──────────────── check │   │
 │  └─────────────────────────────────────────────────────────────┘   │
-│                              같은 인스턴스 ✅                        │
+│                              Same instance ✅                        │
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
 │                   Unstable preRegisteredHandler                      │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  popstateHandler_A (해제됨)     popstateHandler_B (새로 생성)        │
+│  popstateHandler_A (released)     popstateHandler_B (newly created)  │
 │  ┌────────────────────────┐   ┌────────────────────────────────┐   │
 │  │ state_A                │   │ state_B                        │   │
 │  │ .isNavigationConfirmed │   │ .isNavigationConfirmed         │   │
 │  │ = false → true         │   │ = false                        │   │
 │  │      ↑                 │   │                           ↑    │   │
 │  │ [T1] [T4]              │   │                          [T7]  │   │
-│  │  호출  설정             │   │                          확인  │   │
+│  │  call  set             │   │                          check │   │
 │  └────────────────────────┘   └────────────────────────────────┘   │
 │         ↑                              ↑                            │
-│    이 상태에 설정했지만...        이 상태는 false! ❌                │
+│    Set on this state, but...     This state is false! ❌            │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 해결책: useCurrentOverlayRef 패턴
+## Solution: useCurrentOverlayRef Pattern
 
 ```tsx
 function useCurrentOverlayRef() {
@@ -157,23 +211,23 @@ function AppContent({ Component, pageProps }) {
 }
 ```
 
-### 왜 안전한가
+### Why This Is Safe
 
-1. **ref 객체 자체는 stable**: 컴포넌트 생명주기 동안 동일한 참조 유지
-2. **ref.current 업데이트는 useEffect 내에서**: 렌더 중 side effect 없음 (React 규칙 준수)
-3. **popstate는 유저 액션 후에 발생**: effect가 이미 실행된 상태이므로 최신 값 보장
-4. **useCallback deps가 빈 배열**: 함수 참조가 변경되지 않아 effect 재실행 없음
+1. **ref object itself is stable**: Same reference throughout component lifecycle
+2. **ref.current update is in useEffect**: No side effects during render (React rules compliant)
+3. **popstate occurs after user action**: Effect has already run, so latest value is guaranteed
+4. **useCallback deps is empty array**: Function reference doesn't change, so effect won't re-run
 
 ---
 
-## 결론
+## Conclusion
 
-`preRegisteredHandler`가 변경되면:
+When `preRegisteredHandler` changes:
 
-1. **Effect가 재실행**됨 (deps에 포함되어 있으므로)
-2. **새로운 `popstateHandler` 클로저 생성** (`createPopstateHandler` 호출)
-3. **새로운 `createInterceptionStateContext()` 호출로 상태 객체 생성** (모든 상태 초기화)
-4. 이전 async 핸들러가 설정한 상태는 **이전 클로저의 state 객체에만 존재**
-5. 새 popstate는 **새 클로저의 state**를 확인 → `isNavigationConfirmed === false` → 차단
+1. **Effect re-runs** (because it's in deps)
+2. **New `popstateHandler` closure created** (`createPopstateHandler` called)
+3. **New `createInterceptionStateContext()` call creates new state object** (all state reset)
+4. State set by previous async handler **only exists in previous closure's state object**
+5. New popstate checks **new closure's state** → `isNavigationConfirmed === false` → blocked
 
-그래서 `useCallback(fn, [])`으로 stable reference를 유지하고, ref로 최신 값을 읽는 패턴이 필요합니다.
+That's why you need `useCallback(fn, [])` to maintain a stable reference, and use ref to read the latest value.
