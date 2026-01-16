@@ -19,6 +19,19 @@ export interface InterceptionState {
    * should be allowed through without re-running handlers.
    */
   isNavigationConfirmed: boolean;
+
+  /**
+   * True when waiting for history.go() to complete before running handler.
+   * MDN recommends listening for popstate to know when navigation completes.
+   * @see https://developer.mozilla.org/en-US/docs/Web/API/History/go
+   */
+  pendingHandlerExecution: boolean;
+
+  /**
+   * The history index delta stored when back navigation is detected.
+   * Used after handler approves to navigate by calling history.go(delta).
+   */
+  pendingHistoryIndexDelta: number;
 }
 
 /**
@@ -29,6 +42,8 @@ export function createInterceptionStateContext() {
   let state: InterceptionState = {
     isRestoringUrl: false,
     isNavigationConfirmed: false,
+    pendingHandlerExecution: false,
+    pendingHistoryIndexDelta: 0,
   };
 
   return {

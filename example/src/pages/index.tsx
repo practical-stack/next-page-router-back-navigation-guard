@@ -16,6 +16,7 @@ export default function Home() {
             <li><Link href="/priority">Priority Order</Link></li>
             <li><Link href="/pre-registered">Pre-registered Handler</Link></li>
             <li><Link href="/redirect">Redirect on Back</Link></li>
+            <li><Link href="/nohandler">No Handler (no interception)</Link></li>
           </ul>
         </div>
       </main>

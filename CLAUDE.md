@@ -107,6 +107,24 @@ Session token (`sessionToken`) in `history.state` identifies the current session
 
 Uses `router.beforePopState(() => false)` to suppress Next.js state change, then restores URL and runs handlers.
 
+### Async History Navigation (MDN Recommendation)
+
+`history.go()`, `history.back()`, and `history.forward()` are **asynchronous** methods.
+
+> "This method is asynchronous. Add a listener for the popstate event in order to determine when the navigation has completed."
+> — [MDN Web Docs: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
+
+**Implementation approach:**
+
+When back navigation is detected:
+1. Set `pendingHandlerExecution = true` and store `pendingHistoryIndexDelta`
+2. Call `history.go(-delta)` to restore URL
+3. Return `false` to block Next.js navigation
+4. When popstate fires with `delta = 0`, the restoration is complete
+5. **Then** run the handler (which may call `router.push()`)
+
+This ensures `history.go()` completes before handlers execute, preventing history stack corruption when handlers navigate to different pages.
+
 ## Testing
 
 E2E tests in `e2e/navigation-guard.spec.ts` test core scenarios:

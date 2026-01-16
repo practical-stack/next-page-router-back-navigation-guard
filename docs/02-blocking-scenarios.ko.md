@@ -12,8 +12,9 @@
 4. [시나리오 3: 다단계 히스토리 이동](#시나리오-3-다단계-히스토리-이동)
 5. [시나리오 4: Token Mismatch](#시나리오-4-token-mismatch)
 6. [시나리오 5: router.back()](#시나리오-5-routerback)
-7. [내부 처리 시나리오](#내부-처리-시나리오)
-8. [전체 흐름도](#전체-흐름도)
+7. [시나리오 6: 핸들러에서 router.push()로 리다이렉트](#시나리오-6-핸들러에서-routerpush로-리다이렉트)
+8. [내부 처리 시나리오](#내부-처리-시나리오)
+9. [전체 흐름도](#전체-흐름도)
 
 ---
 
@@ -125,7 +126,7 @@ Back button clicked
 popstate event fired
     │
     ▼
-isAllowingNavigation 플래그 확인
+isNavigationConfirmed 플래그 확인
     │
     ├── true → 네비게이션 허용 (핸들러가 이미 확인함)
     │          플래그 초기화, token/index 업데이트, return true
@@ -140,7 +141,7 @@ isAllowingNavigation 플래그 확인
     handler 콜백 전 URL 복원 필요
           │
           ▼
-    isRestoringFromTokenMismatch = true
+    isRestoringUrl = true
           │
           ▼
     history.go(1) 호출 → URL 복원 (앞으로 이동)
@@ -153,9 +154,9 @@ isAllowingNavigation 플래그 확인
           │
           └── OK (handler가 true 반환)
                 └→ 새 token/index 설정
-                └→ isAllowingNavigation = true  ← 중요: back() 호출 전에 설정
+                └→ isNavigationConfirmed = true  ← 중요: back() 호출 전에 설정
                 └→ window.history.back() 재호출
-                └→ 다음 popstate에서 isAllowingNavigation=true 확인
+                └→ 다음 popstate에서 isNavigationConfirmed=true 확인
                 └→ 이전 페이지로 이동
 ```
 
@@ -168,10 +169,10 @@ isAllowingNavigation 플래그 확인
 - `history.state`에 `__next_session_token` 없음
 - 또는 token이 현재 세션과 불일치 (새로고침 시 재생성)
 
-**isAllowingNavigation 플래그**:
+**isNavigationConfirmed 플래그**:
 - handler가 네비게이션을 허용하면 (true 반환) `history.back()` 호출
 - 이는 또 다른 popstate 이벤트를 발생시키고, 다시 token mismatch로 감지됨
-- `isAllowingNavigation` 플래그로 이 후속 popstate를 허용 처리
+- `isNavigationConfirmed` 플래그로 이 후속 popstate를 허용 처리
 - **중요**: 플래그는 반드시 `history.back()` 호출 전에 설정해야 함
 
 ---
@@ -199,11 +200,86 @@ popstate event fired
 
 ---
 
+## 시나리오 6: 핸들러에서 router.push()로 리다이렉트
+
+**상황**: 핸들러가 뒤로가기를 차단하고 다른 페이지로 리다이렉트
+
+```tsx
+useRegisterBackNavigationHandler(() => {
+  router.push('/different-page');  // 뒤로가기 대신 리다이렉트
+  return false;  // 원래 뒤로가기 차단
+});
+```
+
+### 왜 까다로운가
+
+뒤로가기가 감지되면 핸들러가 실행되고 `router.push()`를 호출합니다. 하지만 `history.go()`는 **비동기**(MDN 참조)이므로, 핸들러를 즉시 실행하면 히스토리 스택이 손상될 수 있습니다:
+
+```
+❌ 잘못된 방식: 뒤로가기 감지 후 즉시 핸들러 실행
+    │
+    ▼
+1. 뒤로가기 감지, URL 복원을 위해 history.go(-delta) 호출
+2. 핸들러 즉시 실행 (async IIFE)
+3. router.push('/different-page') 실행
+4. history.go(-delta)가 push 이후에 완료됨
+   → 히스토리 스택 손상!
+```
+
+### MDN 준수 해결책
+
+`delta = 0`인 popstate 이벤트를 수신하여 `history.go()` 완료를 대기합니다:
+
+```
+✅ 올바른 방식: popstate로 history.go() 완료 대기
+    │
+    ▼
+1. 뒤로가기 감지 (delta < 0)
+    │
+    ▼
+2. pendingHandlerExecution = true 설정, pendingHistoryIndexDelta 저장
+    │
+    ▼
+3. URL 복원을 위해 history.go(-delta) 호출
+    │
+    ▼
+4. false 반환 (Next.js 네비게이션 차단)
+    │
+    ▼
+5. delta = 0인 popstate 발생 (복원 완료)
+    │
+    ▼
+6. pendingHandlerExecution === true 확인
+    │
+    ▼
+7. 이제 안전하게 핸들러 실행
+    │
+    ├── 핸들러가 router.push('/different-page') 호출
+    │   → 정상 작동, 히스토리 스택 유지
+    │
+    └── 핸들러가 true 반환
+        → history.go(pendingHistoryIndexDelta) 호출하여 뒤로 이동
+```
+
+> **MDN 참조**: "이 메서드는 비동기입니다. popstate 이벤트 리스너를 추가하여 네비게이션 완료 시점을 알 수 있습니다."
+> — [MDN Web Docs: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
+
+### 관련 상태
+
+| 상태 | 목적 |
+|------|------|
+| `pendingHandlerExecution` | history.go() 완료 대기 중일 때 true |
+| `pendingHistoryIndexDelta` | 핸들러 승인 후 네비게이션을 위한 저장된 delta |
+
+---
+
 ## 내부 처리 시나리오
 
-### 시나리오 6: Delta가 0인 경우 (복원 Popstate)
+### 시나리오 7: Delta가 0인 경우 (핸들러 실행 대기 또는 복원)
 
-차단 후 `history.go(-delta)` 호출 시 또 다른 popstate가 발생합니다. 무한 루프 방지를 위해 delta가 0이면 무시합니다.
+차단 후 `history.go(-delta)` 호출 시 delta = 0인 popstate가 발생합니다. 이는 다음을 의미할 수 있습니다:
+1. **핸들러 실행 대기**: URL 복원 완료, 이제 핸들러 실행
+2. **단순 복원**: 무시 (무한 루프 방지)
 
 ```
 User back → handler cancel → history.go(1) called
@@ -218,27 +294,27 @@ delta = currentIndex - currentIndex = 0
 Event ignored (infinite loop prevention)
 ```
 
-### 시나리오 7: Token Mismatch 복원 Popstate
+### 시나리오 8: Token Mismatch 복원 Popstate
 
-Token mismatch 차단 시 `history.go(1)` 호출로 또 다른 popstate가 발생합니다. `isRestoringFromTokenMismatch` 플래그로 무시합니다.
+Token mismatch 차단 시 `history.go(1)` 호출로 또 다른 popstate가 발생합니다. `isRestoringUrl` 플래그로 무시합니다.
 
 ```
 Token Mismatch detected → history.go(1) called
     │
     ▼
-isRestoringFromTokenMismatch = true
+isRestoringUrl = true
     │
     ▼
 popstate re-fired (by go(1))
     │
     ▼
-Check isRestoringFromTokenMismatch
+Check isRestoringUrl
     │
     ▼
 If true → Clear flag and ignore event
 ```
 
-### 시나리오 8: 새로고침 후 Once 핸들러 (빈 HandlerMap + preRegisteredHandler)
+### 시나리오 9: 새로고침 후 Once 핸들러 (빈 HandlerMap + preRegisteredHandler)
 
 `once: true` 핸들러가 실행 후 삭제되면, 이후 뒤로가기에서 handlerMap이 비어있지만 여전히 `preRegisteredHandler`를 실행해야 합니다.
 
@@ -294,23 +370,23 @@ URL 복원: history.go(1) ← 핵심!
                                    │
                                    ▼
                     +--------------------------+
-                    │ isAllowingNavigation?    │  ← 먼저 확인
+                    │ isNavigationConfirmed?   │  ← 먼저 확인
                     +--------------------------+
                          │              │
                         YES            NO
                          │              │
                          ▼              ▼
-                  +----------+  +--------------------------+
-                  │ 플래그   │  │ Token Mismatch?          │
-                  │ 초기화,  │  │ (token 없음/불일치)      │
-                  │ 허용     │  +--------------------------+
-                  +----------+       │              │
+                   +----------+  +--------------------------+
+                   │ 플래그   │  │ Token Mismatch?          │
+                   │ 초기화,  │  │ (token 없음/불일치)      │
+                   │ 허용     │  +--------------------------+
+                   +----------+       │              │
                                     YES            NO
                                      │              │
                                      ▼              ▼
                    +-------------------------+  +--------------+
-                   │ isRestoringFromToken    │  │ delta === 0? │
-                   │ Mismatch flag?          │  +--------------+
+                   │ isRestoringUrl          │  │ delta === 0? │
+                   │ flag?                   │  +--------------+
                    +-------------------------+       │      │
                           │          │             YES     NO
                          YES        NO              │       │

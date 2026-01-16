@@ -11,6 +11,16 @@
  * custom metadata (__next_navigation_stack_index, __next_session_token) into history.state.
  * This allows us to track position and detect session changes (refresh, external entry).
  *
+ * MDN References:
+ * - History.pushState(): https://developer.mozilla.org/en-US/docs/Web/API/History/pushState
+ *   Signature: pushState(state, unused, url?)
+ *   "The unused parameter exists for historical reasons, and cannot be omitted;
+ *    passing an empty string is safe against future changes to the method."
+ *
+ * - History.replaceState(): https://developer.mozilla.org/en-US/docs/Web/API/History/replaceState
+ *   Signature: replaceState(state, unused, url?)
+ *   Same signature as pushState, replaces current history entry instead of adding new one.
+ *
  * @see docs/HISTORY_API_HACKS.md for detailed explanation
  */
 
