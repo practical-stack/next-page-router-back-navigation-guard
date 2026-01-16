@@ -2,7 +2,7 @@
 
 ## 요약
 
-`preRegisteredHandler`는 반드시 stable reference를 유지해야 합니다. 그렇지 않으면 라이브러리 내부의 `isAllowingNavigation` 플래그가 초기화되어 async 핸들러가 "Leave"를 클릭해도 네비게이션이 차단됩니다.
+`preRegisteredHandler`는 반드시 stable reference를 유지해야 합니다. 그렇지 않으면 라이브러리 내부의 `isNavigationConfirmed` 플래그가 초기화되어 async 핸들러가 "Leave"를 클릭해도 네비게이션이 차단됩니다.
 
 ---
 
@@ -45,13 +45,9 @@ function createPopstateHandler(...) {
     }
     // ...
     
-    (async () => {
-      const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(...);
-      if (shouldAllowNavigation) {
-        interceptionStateContext.setState({ isNavigationConfirmed: true });  // ← 여기서 true로 설정
-        window.history.go(delta);
-      }
-    })();
+    // Internal navigation case now uses pendingHandlerExecution pattern
+    // to ensure history.go() completes before running handlers.
+    // See 02-blocking-scenarios.md Scenario 6 for details.
     
     return false;
   };
@@ -87,60 +83,6 @@ function createPopstateHandler(...) {
      │
      ▼
 [T7] state_A.isNavigationConfirmed === true → 네비게이션 허용 ✅
-```
-
-**핵심:** 같은 `popstateHandler_A` 인스턴스가 계속 사용되므로 `state_A` 상태가 유지됨.
-
----
-
-## 문제 상황 (`preRegisteredHandler`가 변경될 때)
-
-`useCallback` 없이 또는 `[currentOverlay]` deps로 사용하면:
-
-```tsx
-// preRegisteredHandler가 매 렌더 또는 currentOverlay 변경시 새로 생성됨
-const preRegisteredHandler = () => {
-  if (currentOverlay) { ... }
-};
-```
-
-```
-시간 →
-
-[T0] 유저가 뒤로가기 클릭
-     │
-     ▼
-[T1] popstateHandler_A 호출 (state_A: isNavigationConfirmed = false)
-     │
-     ▼
-[T2] 다이얼로그 표시 → currentOverlay 변경됨!
-     │
-     ▼
-[T2.1] _app 리렌더 → preRegisteredHandler 새 함수로 생성
-     │
-     ▼
-[T2.2] Effect 재실행:
-       ┌───────────────────────────────────────────────────────┐
-       │ cleanup: popstateHandler_A 해제                       │
-       │ setup:   popstateHandler_B 새로 생성                  │
-       │          (state_B: isNavigationConfirmed = false)     │  ← 새 상태!
-       └───────────────────────────────────────────────────────┘
-     │
-     ▼
-[T3] 유저가 "Leave" 클릭
-     │
-     ▼
-[T4] state_A.isNavigationConfirmed = true 설정
-     │  (하지만 popstateHandler_A는 이미 해제됨!)
-     │
-     ▼
-[T5] history.go(delta) 호출
-     │
-     ▼
-[T6] 새 popstate 발생 → popstateHandler_B 호출 (현재 등록된 핸들러)
-     │
-     ▼
-[T7] state_B.isNavigationConfirmed === false → 네비게이션 차단! ❌
 ```
 
 ---

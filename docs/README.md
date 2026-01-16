@@ -43,9 +43,19 @@ The documents are organized to tell a complete story. Read in order for best und
 |------|---------|
 | `src/useRegisterBackNavigationHandler.ts` | Handler registration hook |
 | `src/useInterceptPopState.ts` | Popstate interception (core) |
-| `src/useInterceptPopState.helper/history-augmentation.ts` | History API patching |
-| `src/useInterceptPopState.helper/sort-handlers.ts` | Priority-based sorting |
 | `src/BackNavigationHandlerProvider.tsx` | Provider component |
+
+#### Helper Modules (`src/useInterceptPopState.helper/`)
+
+| File | Purpose |
+|------|---------|
+| `history-augmentation.ts` | History API patching (index/token injection) |
+| `interception-state.ts` | Interception flags (`isRestoringUrl`, `isNavigationConfirmed`, etc.) |
+| `rendered-state-context.ts` | Track current historyIndex and sessionToken |
+| `parse-history-state.ts` | Extract token/index from history.state |
+| `handler-execution.ts` | Run handler chain and determine navigation |
+| `sort-handlers.ts` | Priority-based handler sorting |
+| `types.ts` | TypeScript types (`RenderedState`, `NextHistoryState`) |
 
 ---
 

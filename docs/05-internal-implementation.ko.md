@@ -250,7 +250,7 @@ export function useRegisterBackNavigationHandler(
     // 4. 등록 (re-render 없음)
     handlerMap.set(callbackId, {
       id: callbackId,
-      callback: (params) => {
+      callback: async (params) => {
         hasExecutedRef.current = true;
         return handler();
       },

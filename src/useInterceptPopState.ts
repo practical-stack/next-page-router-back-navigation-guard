@@ -10,6 +10,15 @@
  * - History Index: Tracks position in the history stack to calculate navigation delta.
  * - Interception Flow: Restore URL first, run handlers, then allow/block navigation.
  *
+ * MDN References:
+ * - History.go(): https://developer.mozilla.org/en-US/docs/Web/API/History/go
+ *   "This method is asynchronous. Add a listener for the popstate event
+ *    in order to determine when the navigation has completed."
+ * - History.back(): https://developer.mozilla.org/en-US/docs/Web/API/History/back
+ *   Equivalent to history.go(-1). Also asynchronous.
+ * - popstate event: https://developer.mozilla.org/en-US/docs/Web/API/Window/popstate_event
+ *   Fired when the active history entry changes (back/forward/go).
+ *
  * @see https://github.com/vercel/next.js/discussions/47020#discussioncomment-7826121
  */
 
@@ -165,7 +174,11 @@ function createPopstateHandler(
       interceptionStateContext.setState({ isRestoringUrl: true });
       window.history.go(1);
 
-      // Use setTimeout to ensure URL restoration completes before running handlers
+      // history.go(1) triggers a popstate event which is handled above (isRestoringUrl check).
+      // setTimeout(0) simply defers execution to the next event loop tick, so this runs
+      // after the synchronous popstate handler, but it does NOT wait for navigation to complete.
+      // For a more explicit MDN-style async handling pattern, see the pendingHandlerExecution
+      // logic used below. @see https://developer.mozilla.org/en-US/docs/Web/API/History/go
       setTimeout(async () => {
         interceptionStateContext.setState({ isRestoringUrl: false });
         const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(handlerContext, "");
@@ -189,8 +202,33 @@ function createPopstateHandler(
     // Normal navigation within the app where session token matches.
     // Delta calculation: positive = forward, negative = back, zero = no-op
 
-    // Delta is 0 when URL was restored by history.go(-delta) - ignore this event
+    // Delta is 0 when URL was restored by history.go(-delta).
+    // If pendingHandlerExecution is true, this popstate signals that history.go()
+    // has completed, so we can now safely run the handler.
+    // @see https://developer.mozilla.org/en-US/docs/Web/API/History/go
+    // MDN: "This method is asynchronous. Add a listener for the popstate event
+    // in order to determine when the navigation has completed."
     if (historyIndexDelta === 0) {
+      const { pendingHandlerExecution, pendingHistoryIndexDelta } = interceptionStateContext.getState();
+      
+      if (pendingHandlerExecution) {
+        if (DEBUG) console.log(`[Internal] history.go() completed, running pending handler`);
+        interceptionStateContext.setState({ pendingHandlerExecution: false });
+        
+        (async () => {
+          const destinationPath = location.pathname + location.search;
+          const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(handlerContext, destinationPath);
+          if (shouldAllowNavigation) {
+            if (DEBUG) console.log(`[Internal] Handler confirmed`);
+            interceptionStateContext.setState({ isNavigationConfirmed: true });
+            window.history.go(pendingHistoryIndexDelta);
+          } else {
+            if (DEBUG) console.log(`[Internal] Handler blocked`);
+          }
+        })();
+        return false;
+      }
+      
       if (DEBUG) console.log(`[Internal] Ignoring (historyIndexDelta is 0)`);
       interceptionStateContext.setState({ isRestoringUrl: false });
       return false;
@@ -225,22 +263,14 @@ function createPopstateHandler(
       return true;
     }
 
-    // Restore URL first by going forward by the same delta, then run handlers
+    // Restore URL first, then wait for popstate (delta=0) to run handlers.
+    // This follows MDN's recommendation for detecting history.go() completion.
     if (DEBUG) console.log(`[Internal] Restoring URL with history.go(${-historyIndexDelta})`);
+    interceptionStateContext.setState({
+      pendingHandlerExecution: true,
+      pendingHistoryIndexDelta: historyIndexDelta,
+    });
     window.history.go(-historyIndexDelta);
-
-    // Run handlers asynchronously after URL restoration
-    (async () => {
-      const destinationPath = location.pathname + location.search;
-      const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(handlerContext, destinationPath);
-      if (shouldAllowNavigation) {
-        if (DEBUG) console.log(`[Internal] Handler confirmed`);
-        interceptionStateContext.setState({ isNavigationConfirmed: true });
-        window.history.go(historyIndexDelta);
-      } else {
-        if (DEBUG) console.log(`[Internal] Handler blocked`);
-      }
-    })();
     return false;
   };
 }

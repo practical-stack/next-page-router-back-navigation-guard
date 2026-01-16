@@ -12,8 +12,9 @@ This document details all back navigation blocking scenarios handled by `next-pa
 4. [Scenario 3: Multi-Step History Jump](#scenario-3-multi-step-history-jump)
 5. [Scenario 4: Token Mismatch](#scenario-4-token-mismatch)
 6. [Scenario 5: router.back()](#scenario-5-routerback)
-7. [Internal Handling Scenarios](#internal-handling-scenarios)
-8. [Complete Flow Diagram](#complete-flow-diagram)
+7. [Scenario 6: Handler Redirects with router.push()](#scenario-6-handler-redirects-with-routerpush)
+8. [Internal Handling Scenarios](#internal-handling-scenarios)
+9. [Complete Flow Diagram](#complete-flow-diagram)
 
 ---
 
@@ -125,7 +126,7 @@ Back button clicked
 popstate event fired
     │
     ▼
-isAllowingNavigation flag check
+isNavigationConfirmed flag check
     │
     ├── true → Allow navigation (handler already confirmed)
     │          Clear flag, update token/index, return true
@@ -140,7 +141,7 @@ isAllowingNavigation flag check
     URL restoration needed before handler callback
           │
           ▼
-    isRestoringFromTokenMismatch = true
+    isRestoringUrl = true
           │
           ▼
     history.go(1) called → URL restored (forward)
@@ -153,9 +154,9 @@ isAllowingNavigation flag check
           │
           └── OK (handler returns true)
                 └→ Set new token/index
-                └→ isAllowingNavigation = true  ← Critical: set BEFORE back()
+                └→ isNavigationConfirmed = true  ← Critical: set BEFORE back()
                 └→ window.history.back() re-called
-                └→ Next popstate sees isAllowingNavigation=true
+                └→ Next popstate sees isNavigationConfirmed=true
                 └→ Navigate to previous page
 ```
 
@@ -168,10 +169,10 @@ isAllowingNavigation flag check
 - `history.state` has no `__next_session_token`
 - Or token doesn't match current session (regenerated after refresh)
 
-**isAllowingNavigation Flag**:
+**isNavigationConfirmed Flag**:
 - When handler confirms navigation (returns true), we call `history.back()`
 - This triggers another popstate event, which would again detect token mismatch
-- The `isAllowingNavigation` flag ensures this subsequent popstate is allowed through
+- The `isNavigationConfirmed` flag ensures this subsequent popstate is allowed through
 - **Critical**: Flag must be set BEFORE calling `history.back()`, not after
 
 ---
@@ -199,11 +200,86 @@ popstate event fired
 
 ---
 
+## Scenario 6: Handler Redirects with router.push()
+
+**Situation**: Handler blocks back navigation and redirects to a different page
+
+```tsx
+useRegisterBackNavigationHandler(() => {
+  router.push('/different-page');  // Redirect instead of allowing back
+  return false;  // Block the original back navigation
+});
+```
+
+### Why This is Tricky
+
+When back navigation is detected, the handler runs and calls `router.push()`. But `history.go()` is **asynchronous** (per MDN), so if we run the handler immediately, the history stack can become corrupted:
+
+```
+❌ WRONG: Run handler immediately after detecting back
+    │
+    ▼
+1. Back detected, history.go(-delta) called to restore URL
+2. Handler runs immediately (async IIFE)
+3. router.push('/different-page') executes
+4. history.go(-delta) completes AFTER push
+   → History stack corrupted!
+```
+
+### MDN-Compliant Solution
+
+We wait for `history.go()` to complete by listening for the popstate event with `delta = 0`:
+
+```
+✅ CORRECT: Wait for history.go() completion via popstate
+    │
+    ▼
+1. Back detected (delta < 0)
+    │
+    ▼
+2. Set pendingHandlerExecution = true, store pendingHistoryIndexDelta
+    │
+    ▼
+3. Call history.go(-delta) to restore URL
+    │
+    ▼
+4. Return false (block Next.js navigation)
+    │
+    ▼
+5. popstate fires with delta = 0 (restoration complete)
+    │
+    ▼
+6. Check pendingHandlerExecution === true
+    │
+    ▼
+7. NOW run the handler safely
+    │
+    ├── Handler calls router.push('/different-page')
+    │   → Works correctly, history stack intact
+    │
+    └── Handler returns true
+        → Call history.go(pendingHistoryIndexDelta) to navigate back
+```
+
+> **MDN Reference**: "This method is asynchronous. Add a listener for the popstate event in order to determine when the navigation has completed."
+> — [MDN Web Docs: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
+
+### Related State
+
+| State | Purpose |
+|-------|---------|
+| `pendingHandlerExecution` | True when waiting for history.go() to complete |
+| `pendingHistoryIndexDelta` | Stored delta for navigation after handler approves |
+
+---
+
 ## Internal Handling Scenarios
 
-### Scenario 6: Delta is 0 (Restoration Popstate)
+### Scenario 7: Delta is 0 (Pending Handler Execution or Restoration)
 
-After blocking, `history.go(-delta)` triggers another popstate. To prevent infinite loops, we ignore events where delta is 0.
+After blocking, `history.go(-delta)` triggers another popstate with delta = 0. This can mean:
+1. **Pending handler execution**: URL restoration complete, now run the handler
+2. **Simple restoration**: Just ignore (infinite loop prevention)
 
 ```
 User back → handler cancel → history.go(1) called
@@ -218,27 +294,27 @@ delta = currentIndex - currentIndex = 0
 Event ignored (infinite loop prevention)
 ```
 
-### Scenario 7: Token Mismatch Restoration Popstate
+### Scenario 8: Token Mismatch Restoration Popstate
 
-When blocking token mismatch, `history.go(1)` triggers another popstate. We use `isRestoringFromTokenMismatch` flag to ignore it.
+When blocking token mismatch, `history.go(1)` triggers another popstate. We use `isRestoringUrl` flag to ignore it.
 
 ```
 Token Mismatch detected → history.go(1) called
     │
     ▼
-isRestoringFromTokenMismatch = true
+isRestoringUrl = true
     │
     ▼
 popstate re-fired (by go(1))
     │
     ▼
-Check isRestoringFromTokenMismatch
+Check isRestoringUrl
     │
     ▼
 If true → Clear flag and ignore event
 ```
 
-### Scenario 8: Once Handler After Refresh (Empty HandlerMap with preRegisteredHandler)
+### Scenario 9: Once Handler After Refresh (Empty HandlerMap with preRegisteredHandler)
 
 When a `once: true` handler is deleted after execution, subsequent back navigations may have no handlers in the map but still need to run `preRegisteredHandler`.
 
@@ -294,23 +370,23 @@ With `history.go(1)`:
                                    │
                                    ▼
                     +--------------------------+
-                    │ isAllowingNavigation?    │  ← Check FIRST
+                    │ isNavigationConfirmed?   │  ← Check FIRST
                     +--------------------------+
                          │              │
                         YES            NO
                          │              │
                          ▼              ▼
-                  +----------+  +--------------------------+
-                  │ Clear    │  │ Token Mismatch?          │
-                  │ flag,    │  │ (token missing/mismatch) │
-                  │ Allow    │  +--------------------------+
-                  +----------+       │              │
+                   +----------+  +--------------------------+
+                   │ Clear    │  │ Token Mismatch?          │
+                   │ flag,    │  │ (token missing/mismatch) │
+                   │ Allow    │  +--------------------------+
+                   +----------+       │              │
                                     YES            NO
                                      │              │
                                      ▼              ▼
                    +-------------------------+  +--------------+
-                   │ isRestoringFromToken    │  │ delta === 0? │
-                   │ Mismatch flag?          │  +--------------+
+                   │ isRestoringUrl          │  │ delta === 0? │
+                   │ flag?                   │  +--------------+
                    +-------------------------+       │      │
                           │          │             YES     NO
                          YES        NO              │       │
