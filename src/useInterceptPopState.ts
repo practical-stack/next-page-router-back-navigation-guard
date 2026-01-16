@@ -174,10 +174,11 @@ function createPopstateHandler(
       interceptionStateContext.setState({ isRestoringUrl: true });
       window.history.go(1);
 
-      // history.go(1) triggers popstate which is handled above (isRestoringUrl check).
-      // setTimeout(0) runs on next event loop tick, AFTER popstate handling completes.
-      // This implicitly follows MDN's async recommendation without explicit flag tracking.
-      // @see https://developer.mozilla.org/en-US/docs/Web/API/History/go
+      // history.go(1) triggers a popstate event which is handled above (isRestoringUrl check).
+      // setTimeout(0) simply defers execution to the next event loop tick, so this runs
+      // after the synchronous popstate handler, but it does NOT wait for navigation to complete.
+      // For a more explicit MDN-style async handling pattern, see the pendingHandlerExecution
+      // logic used below. @see https://developer.mozilla.org/en-US/docs/Web/API/History/go
       setTimeout(async () => {
         interceptionStateContext.setState({ isRestoringUrl: false });
         const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(handlerContext, "");
