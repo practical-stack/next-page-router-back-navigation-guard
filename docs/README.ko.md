@@ -15,6 +15,7 @@
 | 01 | [이 라이브러리가 필요한 이유](./01-why-this-library.ko.md) | **여기서 시작.** 핵심 문제와 해결책 (URL 복원, index 추적, 세션 토큰). |
 | 02 | [차단 시나리오](./02-blocking-scenarios.ko.md) | 모든 뒤로가기 시나리오와 흐름도. |
 | 03 | [우선순위 시스템](./03-priority-system.ko.md) | 핸들러 옵션: `override`, `enable`, `once`, 충돌 감지. |
+| 07 | [한계](./07-limitation.ko.md) | 알려진 한계와 동작하지 않는 케이스. |
 
 ### 기여자용
 
