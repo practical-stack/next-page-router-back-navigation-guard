@@ -11,6 +11,10 @@ This package is based on [next-navigation-guard](https://github.com/LayerXcom/ne
 
 Please refer to the [docs](./docs) for detailed information.
 
+## Live Demo
+
+Try it out: **[Live Demo](https://practical-stack.github.io/next-page-router-back-navigation-guard/)**
+
 ## Installation
 
 > **Note:** This package is not yet published to npm. Coming soon!
@@ -101,4 +105,4 @@ Provider component that enables back navigation handling.
 
 ## Example
 
-See working example in `example/` directory and its `RegisterBackNavigationHandler` component.
+Try the [Live Demo](https://practical-stack.github.io/next-page-router-back-navigation-guard/) or see the source code in `example/` directory.
