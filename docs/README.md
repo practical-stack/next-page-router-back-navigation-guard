@@ -15,6 +15,7 @@ The documents are organized to tell a complete story. Read in order for best und
 | 01 | [Why This Library](./01-why-this-library.md) | **Start here.** The core problems and solutions (URL restoration, index tracking, session tokens). |
 | 02 | [Blocking Scenarios](./02-blocking-scenarios.md) | All back navigation scenarios with flow diagrams. |
 | 03 | [Priority System](./03-priority-system.md) | Handler options: `override`, `enable`, `once`, conflict detection. |
+| 07 | [Limitations](./07-limitation.md) | Known limitations and non-working cases. |
 
 ### For Contributors
 
