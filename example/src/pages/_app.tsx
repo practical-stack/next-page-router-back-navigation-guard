@@ -4,7 +4,7 @@ import { BackNavigationHandlerProvider } from "next-page-router-back-navigation-
 import { OverlayProvider, overlay, useCurrentOverlay } from "overlay-kit";
 
 /**
- * @see docs/why-use-current-overlay-ref.md
+ * @see docs/06-preregistered-handler-reference-stability.md
  */
 function useCurrentOverlayRef() {
   const currentOverlay = useCurrentOverlay();
