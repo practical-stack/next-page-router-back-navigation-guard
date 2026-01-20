@@ -195,13 +195,63 @@ useRegisterBackNavigationHandler(() => {
 });
 ```
 
-### If You Must Redirect
+### Safe Redirect Pattern (If You Must Redirect)
 
-If your use case absolutely requires redirecting on back navigation, be aware that:
-- Subsequent back navigation from the redirected page may behave unexpectedly
-- Browser back button may not work as expected after page refresh
+If your use case requires redirecting on back navigation, use the **modal-based pattern** instead of calling `router.push()` directly inside the handler:
+
+```typescript
+// ✅ SAFE: Open modal, let user trigger navigation
+useRegisterBackNavigationHandler(() => {
+  // 1. Open modal (fire-and-forget, no await)
+  overlay.open(({ isOpen, close }) => (
+    <RedirectModal
+      isOpen={isOpen}
+      close={close}
+      onConfirm={() => router.push('/target-page')}  // 3. User clicks → navigate
+    />
+  ));
+  
+  // 2. Return immediately - handler is DONE
+  return false;
+});
+```
+
+**Why this works:**
+1. Handler returns `false` **synchronously** → back navigation is blocked
+2. Modal is displayed to user
+3. User clicks button → `router.push()` is a **new user-initiated navigation**
+4. This is NOT inside the handler context anymore
+5. Browser treats it as a legitimate navigation (with user activation)
+
+**Key differences from the unsafe pattern:**
+
+| Aspect | Unsafe Pattern | Safe Pattern |
+|--------|----------------|--------------|
+| Handler behavior | Calls `router.push()` inside handler | Returns `false` immediately |
+| Navigation trigger | Inside handler (no user activation) | User button click (user activation) |
+| After refresh | ❌ Browser back button may fail | ✅ Works correctly |
+| Session token | Mixed old/new tokens cause issues | Clean navigation flow |
+
+> See the [Safe Redirect Pattern example](/redirect-safe) for a working implementation.
+
+### Unsafe Redirect Pattern (NOT RECOMMENDED)
+
+The following pattern is **NOT supported** and causes bugs after page refresh:
+
+```typescript
+// ❌ UNSAFE: Direct router.push inside handler
+useRegisterBackNavigationHandler(() => {
+  router.push('/target-page'); // This causes issues!
+  return false;
+});
+```
+
+**Known bugs:**
+- After page refresh, browser back button may navigate to wrong page
 - `router.back()` API may work while browser back button doesn't
-- This is acceptable **only** if you don't care where users go after the redirect (e.g., funnel exit prevention where leaving the app is acceptable)
+- Navigation may jump to unexpected pages due to session token mismatch
+
+> See the [Redirect on Back example](/redirect) to reproduce this bug.
 
 ### References
 
@@ -239,7 +289,7 @@ On Samsung Internet Browser, **instead of blocking back navigation, all overlays
 | Limitation | Impact | Response |
 |------------|--------|----------|
 | Requires history within same app | Doesn't work on external entry | Notify user or implement separate handling |
-| router.push/replace in handler | Unpredictable navigation, browser back button may fail after refresh while `router.back()` works | **Do not use** - show dialogs or close overlays instead |
+| router.push/replace in handler | Unpredictable navigation, browser back button may fail after refresh | Use **Safe Redirect Pattern** (modal + button click) |
 | Samsung Internet "Block backward redirections" | Cannot block back navigation | Fallback to unmount overlays |
 
 ### Key Takeaway
@@ -251,4 +301,7 @@ The browser's History API has fundamental security restrictions that cannot be b
 3. **After page refresh**, the library cannot reliably intercept navigation on pages without handlers
 4. **iOS Safari** has additional restrictions on popstate events
 
-**The safest pattern**: Use handlers only for confirmation dialogs or closing overlays. Do not perform routing inside handlers.
+**The safest patterns**:
+- Use handlers for **confirmation dialogs** or **closing overlays**
+- If redirect is needed, use the **Safe Redirect Pattern**: open a modal, let user click to navigate
+- **Never** call `router.push()` directly inside a handler

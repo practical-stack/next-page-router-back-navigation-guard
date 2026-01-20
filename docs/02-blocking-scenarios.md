@@ -12,7 +12,7 @@ This document details all back navigation blocking scenarios handled by `next-pa
 4. [Scenario 3: Multi-Step History Jump](#scenario-3-multi-step-history-jump)
 5. [Scenario 4: Token Mismatch](#scenario-4-token-mismatch)
 6. [Scenario 5: router.back()](#scenario-5-routerback)
-7. [Scenario 6: Handler Redirects with router.push()](#scenario-6-handler-redirects-with-routerpush)
+7. [Scenario 6: Redirect on Back Navigation](#scenario-6-redirect-on-back-navigation)
 8. [Internal Handling Scenarios](#internal-handling-scenarios)
 9. [Complete Flow Diagram](#complete-flow-diagram)
 
@@ -213,18 +213,85 @@ popstate event fired
 
 ---
 
-## Scenario 6: Handler Redirects with router.push()
+## Scenario 6: Redirect on Back Navigation
 
-**Situation**: Handler blocks back navigation and redirects to a different page
+**Situation**: Instead of allowing back navigation, redirect to a different page
+
+### Safe Pattern (Recommended)
+
+**Open a modal and let the user click a button** to trigger navigation:
 
 ```tsx
+useRegisterBackNavigationHandler(() => {
+  // 1. Open modal (fire-and-forget, no await)
+  overlay.open(({ isOpen, close }) => (
+    <RedirectModal
+      isOpen={isOpen}
+      close={close}
+      onConfirm={() => router.push("/target-page")}  // User clicks → navigate
+    />
+  ));
+  
+  // 2. Return immediately - handler is DONE
+  return false;
+});
+```
+
+#### Why This Works
+
+```
+Back button clicked
+    │
+    ▼
+Handler executes
+    │
+    ├── Opens modal (synchronous, fire-and-forget)
+    │
+    └── Returns false immediately
+          │
+          ▼
+    Back navigation blocked, URL restored
+          │
+          ▼
+    User sees modal with "Go to Target Page" button
+          │
+          ▼
+    User clicks button (user activation!)
+          │
+          ▼
+    router.push('/target-page') executes
+          │
+          ▼
+    Navigation succeeds ✅
+```
+
+#### Implementation Notes
+
+1. **Fire-and-forget**: Don't `await` the modal. The handler must return synchronously.
+2. **User activation**: The button click provides "user activation" which browsers require for navigation after security events.
+3. **Modal state**: Use overlay/modal libraries (like `overlay-kit`) that manage their own state, so the modal persists after the handler returns.
+
+---
+
+### Unsafe Pattern (Not Recommended)
+
+Calling `router.push()` directly inside the handler:
+
+```tsx
+// ⚠️ NOT RECOMMENDED - has issues after page refresh
 useRegisterBackNavigationHandler(() => {
   router.push('/different-page');  // Redirect instead of allowing back
   return false;  // Block the original back navigation
 });
 ```
 
-### Why This is Tricky
+#### Why This is Problematic
+
+This pattern works in normal conditions but **fails after page refresh**:
+- Browser security policies may block navigation without user activation
+- The timing of `history.go()` completion vs `router.push()` becomes unpredictable
+
+#### Internal Implementation (How We Handle It)
 
 When back navigation is detected, the handler runs and calls `router.push()`. But `history.go()` is **asynchronous** (per MDN), so if we run the handler immediately, the history stack can become corrupted:
 
@@ -238,8 +305,6 @@ When back navigation is detected, the handler runs and calls `router.push()`. Bu
 4. history.go(-delta) completes AFTER push
    → History stack corrupted!
 ```
-
-### MDN-Compliant Solution
 
 We wait for `history.go()` to complete by listening for the popstate event with `delta = 0`:
 
@@ -277,12 +342,28 @@ We wait for `history.go()` to complete by listening for the popstate event with 
 > **MDN Reference**: "This method is asynchronous. Add a listener for the popstate event in order to determine when the navigation has completed."
 > — [MDN Web Docs: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
 
-### Related State
+#### Related State
 
 | State | Purpose |
 |-------|---------|
 | `pendingHandlerExecution` | True when waiting for history.go() to complete |
 | `pendingHistoryIndexDelta` | Stored delta for navigation after handler approves |
+
+---
+
+### Comparison
+
+| Aspect | Safe Pattern | Unsafe Pattern |
+|--------|--------------|----------------|
+| `router.push()` called | Inside button onClick | Inside handler |
+| User activation | Yes (button click) | No |
+| Handler returns | Immediately (`false`) | After `router.push()` |
+| After refresh | ✅ Works correctly | ❌ May fail |
+
+### Example Files
+
+- Safe pattern: `example/src/pages/redirect-safe.tsx`
+- Unsafe pattern: `example/src/pages/redirect.tsx`
 
 ---
 

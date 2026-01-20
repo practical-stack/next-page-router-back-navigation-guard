@@ -45,6 +45,10 @@ export default function Home() {
               <Link href="/nohandler">No Handler</Link>
               <span style={{ fontSize: 13, color: "#666" }}> — Page without handler (normal back navigation)</span>
             </li>
+            <li>
+              <Link href="/redirect-safe">Safe Redirect Pattern</Link>
+              <span style={{ fontSize: 13, color: "#666" }}> — Block back, show modal, redirect on confirm (recommended)</span>
+            </li>
           </ul>
         </div>
 

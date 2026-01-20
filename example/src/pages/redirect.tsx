@@ -53,11 +53,15 @@ export default function RedirectTest() {
 
       <div style={{ 
         background: "#e8f5e9", 
+        border: "2px solid #4caf50",
         padding: 15, 
         borderRadius: 8, 
         marginTop: 20 
       }}>
-        <h4 style={{ margin: "0 0 10px 0" }}>Recommended Patterns Instead:</h4>
+        <h4 style={{ margin: "0 0 10px 0", color: "#2e7d32" }}>✅ Use Safe Redirect Pattern Instead:</h4>
+        <p style={{ margin: "0 0 10px 0" }}>
+          If you need to redirect on back, use a modal and let the user trigger navigation:
+        </p>
         <pre style={{ 
           background: "#f5f5f5", 
           padding: 10, 
@@ -65,26 +69,19 @@ export default function RedirectTest() {
           overflow: "auto",
           fontSize: 12 
         }}>
-{`// ✅ Show confirmation dialog
+{`// ✅ SAFE: Open modal, user triggers navigation
 useRegisterBackNavigationHandler(() => {
-  return window.confirm('Leave page?');
-});
-
-// ✅ Close modal/overlay
-useRegisterBackNavigationHandler(() => {
-  if (isModalOpen) {
-    closeModal();
-    return false;
-  }
-  return true;
-});
-
-// ❌ DON'T: Route inside handler
-useRegisterBackNavigationHandler(() => {
-  router.push('/somewhere'); // NOT SUPPORTED
-  return false;
+  overlay.open(({ isOpen, close }) => (
+    <Modal onConfirm={() => router.push('/page')} />
+  ));
+  return false; // Return immediately
 });`}
         </pre>
+        <p style={{ margin: "10px 0 0 0" }}>
+          <Link href="/redirect-safe" style={{ color: "#2e7d32", fontWeight: "bold" }}>
+            → See Safe Redirect Pattern Example
+          </Link>
+        </p>
       </div>
 
       <div style={{ marginTop: 20 }}>
