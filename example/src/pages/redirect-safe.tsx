@@ -14,7 +14,7 @@ function RedirectModal({ isOpen, close, onConfirm }: RedirectModalProps) {
   if (!isOpen) return null;
 
   return (
-    <AlertDialog.Root open={true}>
+    <AlertDialog.Root open={isOpen}>
       <AlertDialog.Portal>
         <AlertDialog.Backdrop
           style={{
@@ -66,8 +66,8 @@ function RedirectModal({ isOpen, close, onConfirm }: RedirectModalProps) {
           >
             <button
               onClick={() => {
-                close();
                 onConfirm();
+                close();
               }}
               style={{
                 padding: "8px 16px",
