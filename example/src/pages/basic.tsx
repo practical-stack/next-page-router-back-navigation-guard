@@ -35,6 +35,8 @@ export default function BasicTest() {
 
       <div style={{ marginTop: 20 }}>
         <Link href="/">Back to Home</Link>
+        {" | "}
+        <Link href="/nohandler">Go to No Handler</Link>
       </div>
 
       <div style={{ marginTop: 20 }}>

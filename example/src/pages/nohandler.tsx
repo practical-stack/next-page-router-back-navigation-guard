@@ -28,6 +28,8 @@ export default function NoHandlerTest() {
 
       <div style={{ marginTop: 20 }}>
         <Link href="/">Back to Home</Link>
+        {" | "}
+        <Link href="/basic">Go to Basic Handler</Link>
       </div>
 
       <div style={{ marginTop: 20 }}>
