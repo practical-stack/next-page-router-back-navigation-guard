@@ -140,13 +140,14 @@ iOS Safari has additional restrictions:
 
 ### Browser Behavior Summary
 
+> ✅ = Works correctly / No issue | ❌ = Has issue / Doesn't work
+
 | Behavior | Chrome | Safari Desktop | iOS Safari |
 |----------|--------|----------------|------------|
-| Back button skips entries without user activation | ✅ | ✅ | ✅ |
 | `history.back()` API respects all entries | ✅ | ✅ | ✅ |
-| popstate on swipe-back (no user activation) | N/A | N/A | ❌ (iOS 16+) |
-| popstate lost during network request | ❌ | ✅ | ✅ |
-| `history.go()` is async | ✅ | ✅ | ✅ |
+| popstate fires on swipe-back (without user activation) | N/A | N/A | ❌ (iOS 16+) |
+| popstate reliable during network requests | ✅ | ❌ | ❌ |
+| Back button affected by History Manipulation Intervention | Yes | Yes | Yes |
 
 ### Technical Background: history.go() is Asynchronous
 

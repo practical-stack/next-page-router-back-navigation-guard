@@ -98,7 +98,7 @@ useRegisterBackNavigationHandler(() => {
       </div>
 
       <p style={{ marginTop: 20, fontSize: 12, color: "#666" }}>
-        See <a href="https://github.com/user/repo/docs/07-limitation.md" target="_blank" rel="noopener noreferrer">
+        See <a href="https://github.com/practical-stack/next-page-router-back-navigation-guard/blob/main/docs/07-limitation.md" target="_blank" rel="noopener noreferrer">
           Limitations documentation
         </a> for more details.
       </p>

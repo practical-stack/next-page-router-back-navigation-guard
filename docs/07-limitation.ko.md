@@ -140,13 +140,14 @@ iOS Safari에는 추가적인 제한이 있습니다:
 
 ### 브라우저 동작 요약
 
+> ✅ = 정상 동작 / 이슈 없음 | ❌ = 이슈 있음 / 동작 안함
+
 | 동작 | Chrome | Safari Desktop | iOS Safari |
 |------|--------|----------------|------------|
-| 사용자 활성화 없는 항목을 뒤로가기 버튼이 건너뜀 | ✅ | ✅ | ✅ |
 | `history.back()` API가 모든 항목을 존중 | ✅ | ✅ | ✅ |
-| 스와이프 뒤로가기에서 popstate (사용자 활성화 없음) | N/A | N/A | ❌ (iOS 16+) |
-| 네트워크 요청 중 popstate 손실 | ❌ | ✅ | ✅ |
-| `history.go()`가 비동기 | ✅ | ✅ | ✅ |
+| 스와이프 뒤로가기에서 popstate 발생 (사용자 활성화 없이) | N/A | N/A | ❌ (iOS 16+) |
+| 네트워크 요청 중 popstate 안정적 | ✅ | ❌ | ❌ |
+| 뒤로가기 버튼이 History Manipulation Intervention 영향받음 | Yes | Yes | Yes |
 
 ### 기술적 배경: history.go()는 비동기
 
