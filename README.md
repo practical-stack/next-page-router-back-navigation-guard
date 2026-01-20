@@ -143,9 +143,7 @@ pnpm e2e:ui
 | **Pre-registered Handler** | Handler registered via Provider's `preRegisteredHandler` prop |
 | **Pre-registered Handler (Overlay Close)** | `preRegisteredHandler` closes overlay and blocks navigation |
 | **Browser Back Button** | `page.goBack()` triggers handler same as `router.back()` |
-| **Redirect on Back** | Handler can redirect to different page using `router.push()` |
 | **After Refresh (Token Mismatch)** | Handler works correctly after page reload |
-| **Redirect to No Handler Page** | Navigation works normally on pages without handlers |
 
 ### Browser Configuration
 
@@ -171,7 +169,7 @@ Reference: https://github.com/microsoft/playwright/issues/23210
 
 See [Limitations](./docs/07-limitation.md) for known limitations including:
 - Requires history within the same app (doesn't work on first page entry)
-- History stack issues when using `router.push/replace` inside handler (Chrome only)
+- **Do NOT use `router.push/replace` inside handler** — causes unpredictable navigation behavior due to browser security policies
 - Samsung Internet Browser "Block backward redirections" feature (enabled by default)
 
 ## Example

@@ -49,67 +49,166 @@ To solve this case, the design would need to be changed to add history entries w
 
 ---
 
-## 2. History Issues When Using router.push/replace Inside Handler (Chrome Only)
+## 2. Do NOT Use router.push/replace Inside Handler
 
-When calling `router.push()` or `router.replace()` inside a handler, **the history stack gets corrupted in Chrome only**. Safari works correctly.
+**Using `router.push()` or `router.replace()` inside a handler is NOT supported and causes unpredictable behavior.**
 
-### Problem Scenario
+### Why This Doesn't Work
+
+When a handler calls `router.push('/new-page')`:
+
+1. The new page (`/new-page`) typically has **no handler registered**
+2. On the new page, pressing back triggers a **session token mismatch** (mixing old and new session history entries)
+3. Without a handler on the new page, navigation is allowed to proceed
+4. The browser navigates to an **unexpected history entry** from the previous session
+
+### Problem Scenario (After Refresh)
 
 ```
-1. External Page → Page A → Page B (normal navigation)
-2. Press back on Page B
-3. Handler redirects to Home page using router.push('/home')
-4. Press back on Home page
-5. Expected: Navigate to Page B or Page A
-6. Actual: Exits to external page (leaves the app)
+1. Home → Page A (with handler)
+2. Refresh Page A
+3. Press back → Handler calls router.push('/new-page')
+4. Arrive at /new-page (no handler)
+5. Press back on /new-page
+6. Expected: Navigate back to Page A
+7. Actual: Navigates to Home (or other unexpected page)
 ```
 
-#### Expected Behavior (Safari)
-https://github.com/user-attachments/assets/7bca4852-ec3f-4da1-950a-c8fac1b25d45
+This happens because:
+- The history stack contains entries from **before** the refresh (old session token)
+- `/new-page` has no handler to intercept the session token mismatch
+- Navigation proceeds to an old session entry instead of the expected page
 
-#### Issue (Chrome)
-https://github.com/user-attachments/assets/dd8b6d81-0c7b-499b-bfb3-525f634fdaa7
+### Root Cause: Session Token Isolation
 
-### Affected Code
+After a page refresh, the library generates a new session token. However:
+- Old history entries still exist with the **previous session token**
+- New pages added via `router.push()` have the **current session token**
+- Pages without handlers cannot distinguish between these sessions
+- This causes navigation to "leak" into old session history
+
+### Browser Back Button vs router.back() API
+
+An important distinction exists between how browsers handle the back button versus the `history.back()` API:
+
+| Navigation Method | Behavior After Refresh |
+|-------------------|------------------------|
+| **Browser Back Button** | May skip entries or fail to trigger popstate (browser security policy) |
+| **`router.back()` / `history.back()` API** | Respects all history entries (works normally) |
+
+**Why this difference exists:**
+
+Chrome and WebKit (Safari/iOS) implement a **History Manipulation Intervention** security feature:
+
+> "The intervention makes the browser's back/forward buttons skip over pages that added history entries or redirected the user without ever getting a user activation."
+> — [Chromium Documentation](https://chromium.googlesource.com/chromium/src/+/refs/heads/lkgr/docs/history_manipulation_intervention.md)
+
+**Critically, this policy only affects browser UI buttons, not JavaScript APIs:**
+
+> "It **only impacts the browser back/forward buttons** and not the `history.back()` or `history.forward()` APIs."
+
+#### After Refresh Scenario
+
+```
+Before Refresh:
+- All history entries created with user interaction ✅
+- Browser treats them as "legitimate"
+
+After Refresh:
+- Current page is a "new document load"
+- When library calls history.go(1) to restore URL, this happens inside
+  a popstate handler (no user activation context)
+- Browser may treat subsequent entries as "suspicious"
+```
+
+**Result:**
+- `router.back()` button click → User activation → API call → Works ✅
+- Browser back button → Security policy applied → May skip entries or fail ❌
+
+### iOS Safari Specific Issues (iOS 16+)
+
+iOS Safari has additional restrictions:
+
+1. **Swipe-back gesture may not fire popstate** ([WebKit Bug 248303](https://bugs.webkit.org/show_bug.cgi?id=248303))
+   > "popstate events are not fired for swipe-back gesture if the history entry was added without direct user interaction"
+
+2. **popstate events lost during network requests** ([WebKit Bug 158489](https://bugs.webkit.org/show_bug.cgi?id=158489))
+   - This issue does not occur in Chrome or Firefox
+
+3. **Page cache behavior differs** ([WebKit Bug 145953](https://bugs.webkit.org/show_bug.cgi?id=145953))
+   - After pushState + navigation away + back, Safari may request the page from server instead of restoring from cache
+
+### Browser Behavior Summary
+
+| Behavior | Chrome | Safari Desktop | iOS Safari |
+|----------|--------|----------------|------------|
+| Back button skips entries without user activation | ✅ | ✅ | ✅ |
+| `history.back()` API respects all entries | ✅ | ✅ | ✅ |
+| popstate on swipe-back (no user activation) | N/A | N/A | ❌ (iOS 16+) |
+| popstate lost during network request | ❌ | ✅ | ✅ |
+| `history.go()` is async | ✅ | ✅ | ✅ |
+
+### Technical Background: history.go() is Asynchronous
+
+MDN explicitly states:
+
+> "This method is asynchronous. Add a listener for the popstate event in order to determine when the navigation has completed."
+> — [MDN: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
+
+This creates timing challenges:
+```javascript
+history.go(1);
+// ❌ This runs BEFORE go(1) completes
+doSomething();
+
+// ✅ Correct: wait for popstate
+window.addEventListener('popstate', () => {
+  doSomething();
+});
+history.go(1);
+```
+
+### Recommended Patterns
+
+Instead of routing inside handlers, use these patterns:
 
 ```typescript
-useRegisterBackNavigationHandler(
-  async () => {
-    router.push('/home'); // History gets corrupted after redirect
-    return false;
-  },
-  { once: true }
-);
+// ✅ GOOD: Show confirmation dialog, let user decide
+useRegisterBackNavigationHandler(() => {
+  return window.confirm('You have unsaved changes. Leave anyway?');
+});
+
+// ✅ GOOD: Close overlay/modal and block navigation
+useRegisterBackNavigationHandler(() => {
+  if (isModalOpen) {
+    closeModal();
+    return false; // Block navigation, modal is closed
+  }
+  return true; // Allow navigation
+});
+
+// ❌ BAD: Route to another page inside handler
+useRegisterBackNavigationHandler(() => {
+  router.push('/home'); // DO NOT DO THIS
+  return false;
+});
 ```
 
-### Browser Behavior
+### If You Must Redirect
 
-| Browser | Issue Present |
-|---------|---------------|
-| Chrome (Windows) | Yes |
-| Mac Chrome | Yes |
-| Android Chrome | Unconfirmed |
-| Mac Safari | Works correctly |
-| iOS Safari | Works correctly |
+If your use case absolutely requires redirecting on back navigation, be aware that:
+- Subsequent back navigation from the redirected page may behave unexpectedly
+- Browser back button may not work as expected after page refresh
+- `router.back()` API may work while browser back button doesn't
+- This is acceptable **only** if you don't care where users go after the redirect (e.g., funnel exit prevention where leaving the app is acceptable)
 
-> **Note**: This issue does not occur in Safari. It has only been confirmed in Chrome-based browsers.
+### References
 
-### Acceptable Use Cases
-
-This limitation is acceptable when using it for **redirecting to a specific page on back navigation**:
-
-```typescript
-// Funnel exit prevention: redirect to home on back navigation
-useRegisterBackNavigationHandler(
-  async () => {
-    router.push('/home');
-    return false;
-  },
-  { once: true }
-);
-```
-
-The intent of this pattern is to **prevent users from going back to previous funnel steps**. Even if pressing back on the redirected page exits the app, the original purpose (preventing access to a specific page via back navigation) is achieved, so this limitation can be accepted.
+- [Chromium History Manipulation Intervention](https://chromium.googlesource.com/chromium/src/+/refs/heads/lkgr/docs/history_manipulation_intervention.md)
+- [WebKit Bug 248303: popstate not fired for swipe-back](https://bugs.webkit.org/show_bug.cgi?id=248303)
+- [WebKit Bug 158489: popstate lost during network request](https://bugs.webkit.org/show_bug.cgi?id=158489)
+- [MDN: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
+- [WHATWG HTML Issue #7832: History traversal user gesture](https://github.com/whatwg/html/issues/7832)
 
 ---
 
@@ -139,5 +238,16 @@ On Samsung Internet Browser, **instead of blocking back navigation, all overlays
 | Limitation | Impact | Response |
 |------------|--------|----------|
 | Requires history within same app | Doesn't work on external entry | Notify user or implement separate handling |
-| router.push/replace in handler | History corruption (Chrome only, Safari OK) | Accept limitation for funnel exit prevention purposes |
+| router.push/replace in handler | Unpredictable navigation, browser back button may fail after refresh while `router.back()` works | **Do not use** - show dialogs or close overlays instead |
 | Samsung Internet "Block backward redirections" | Cannot block back navigation | Fallback to unmount overlays |
+
+### Key Takeaway
+
+The browser's History API has fundamental security restrictions that cannot be bypassed:
+
+1. **Browser back button** applies security policies that may skip history entries
+2. **`history.back()` API** respects all entries but requires user activation context
+3. **After page refresh**, the library cannot reliably intercept navigation on pages without handlers
+4. **iOS Safari** has additional restrictions on popstate events
+
+**The safest pattern**: Use handlers only for confirmation dialogs or closing overlays. Do not perform routing inside handlers.
