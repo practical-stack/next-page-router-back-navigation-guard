@@ -147,7 +147,7 @@ isNavigationConfirmed flag check
     history.go(1) called → URL restored (forward)
           │
           ▼
-    setTimeout: async handler callback execution
+    requestAnimationFrame + setTimeout: async handler callback execution
           │
           ├── Cancel (handler returns false)
           │     └→ Stay on current page
@@ -174,6 +174,19 @@ isNavigationConfirmed flag check
 - This triggers another popstate event, which would again detect token mismatch
 - The `isNavigationConfirmed` flag ensures this subsequent popstate is allowed through
 - **Critical**: Flag must be set BEFORE calling `history.back()`, not after
+
+**Why `requestAnimationFrame + setTimeout` instead of `pendingHandlerExecution` pattern?**
+
+For internal navigation (Scenario 6), we use `pendingHandlerExecution` and wait for `historyIndexDelta === 0` to detect `history.go()` completion. But for token mismatch, this approach **doesn't work**:
+
+- After page refresh, ALL history entries have the **old session token**
+- Every subsequent popstate will still trigger `isSessionTokenMismatch`
+- We cannot use delta-based detection because the `historyIndex` tracking is unreliable after refresh
+
+Instead, we use `requestAnimationFrame(() => setTimeout(..., 0))` to wait for the browser to settle:
+1. `requestAnimationFrame` ensures the browser has completed rendering
+2. `setTimeout(0)` ensures pending microtasks and events are processed
+3. This is more reliable than `setTimeout(0)` alone for async history navigation
 
 ---
 

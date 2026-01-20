@@ -49,67 +49,167 @@ https://github.com/user-attachments/assets/b819ea8f-ea66-49c1-96fe-226afa8854f6
 
 ---
 
-## 2. 핸들러 내에서 router.push/replace 사용 시 히스토리 이슈 (Chrome 전용)
+## 2. 핸들러 내에서 router.push/replace 사용 금지
 
-핸들러 내에서 `router.push()` 또는 `router.replace()`를 호출하면 **Chrome에서만 히스토리 스택이 꼬이는 문제**가 발생합니다. Safari에서는 정상 동작합니다.
+**핸들러 내에서 `router.push()` 또는 `router.replace()`를 사용하는 것은 지원되지 않으며 예측 불가능한 동작을 유발합니다.**
 
-### 문제 상황
+### 왜 동작하지 않는가
+
+핸들러가 `router.push('/new-page')`를 호출할 때:
+
+1. 새 페이지(`/new-page`)는 일반적으로 **핸들러가 등록되어 있지 않습니다**
+2. 새 페이지에서 뒤로가기를 누르면 **세션 토큰 불일치**가 발생합니다 (이전 세션과 새 세션의 히스토리 항목이 섞임)
+3. 새 페이지에 핸들러가 없으면 네비게이션이 허용됩니다
+4. 브라우저가 이전 세션의 **예상치 못한 히스토리 항목**으로 이동합니다
+
+### 문제 시나리오 (새로고침 후)
 
 ```
-1. 외부 페이지 → Page A → Page B (정상 이동)
-2. Page B에서 뒤로가기
-3. 핸들러가 router.push('/home')으로 Home 페이지로 리다이렉트
-4. Home 페이지에서 뒤로가기
-5. 예상: Page B 또는 Page A로 이동
-6. 실제: 외부 페이지로 이탈 (앱 밖으로 나감)
+1. Home → Page A (핸들러 있음)
+2. Page A 새로고침
+3. 뒤로가기 → 핸들러가 router.push('/new-page') 호출
+4. /new-page에 도착 (핸들러 없음)
+5. /new-page에서 뒤로가기
+6. 예상: Page A로 돌아감
+7. 실제: Home으로 이동 (또는 다른 예상치 못한 페이지)
 ```
 
-#### 예상 동작 (Safari)
-https://github.com/user-attachments/assets/7bca4852-ec3f-4da1-950a-c8fac1b25d45
+이것이 발생하는 이유:
+- 히스토리 스택에 새로고침 **이전**의 항목들이 존재합니다 (이전 세션 토큰)
+- `/new-page`는 세션 토큰 불일치를 가로챌 핸들러가 없습니다
+- 네비게이션이 예상 페이지 대신 이전 세션 항목으로 진행됩니다
 
-#### 이슈 (Chrome)
-https://github.com/user-attachments/assets/dd8b6d81-0c7b-499b-bfb3-525f634fdaa7
+### 근본 원인: 세션 토큰 격리
 
-### 영향받는 코드
+페이지 새로고침 후, 라이브러리는 새로운 세션 토큰을 생성합니다. 하지만:
+- 이전 히스토리 항목들은 여전히 **이전 세션 토큰**을 가지고 있습니다
+- `router.push()`로 추가된 새 페이지들은 **현재 세션 토큰**을 가집니다
+- 핸들러가 없는 페이지들은 이 세션들을 구분할 수 없습니다
+- 이로 인해 네비게이션이 이전 세션 히스토리로 "누출"됩니다
+
+### 브라우저 뒤로가기 버튼 vs router.back() API
+
+브라우저가 뒤로가기 버튼과 `history.back()` API를 처리하는 방식에는 중요한 차이가 있습니다:
+
+| 네비게이션 방식 | 새로고침 후 동작 |
+|-----------------|------------------|
+| **브라우저 뒤로가기 버튼** | 항목을 건너뛰거나 popstate가 발생하지 않을 수 있음 (브라우저 보안 정책) |
+| **`router.back()` / `history.back()` API** | 모든 히스토리 항목을 존중함 (정상 동작) |
+
+**왜 이런 차이가 존재하는가:**
+
+Chrome과 WebKit(Safari/iOS)은 **History Manipulation Intervention** 보안 기능을 구현합니다:
+
+> "이 개입은 브라우저의 뒤로/앞으로 버튼이 사용자 활성화 없이 히스토리 항목을 추가하거나 사용자를 리다이렉트한 페이지를 건너뛰게 합니다."
+> — [Chromium 문서](https://chromium.googlesource.com/chromium/src/+/refs/heads/lkgr/docs/history_manipulation_intervention.md)
+
+**중요한 점은, 이 정책은 브라우저 UI 버튼에만 영향을 미치고 JavaScript API에는 영향을 미치지 않습니다:**
+
+> "이것은 **브라우저 뒤로/앞으로 버튼에만 영향**을 미치며 `history.back()` 또는 `history.forward()` API에는 영향을 미치지 않습니다."
+
+#### 새로고침 후 시나리오
+
+```
+새로고침 전:
+- 모든 히스토리 항목이 사용자 상호작용으로 생성됨 ✅
+- 브라우저가 이들을 "정당한" 것으로 취급
+
+새로고침 후:
+- 현재 페이지가 "새 문서 로드"
+- 라이브러리가 URL 복원을 위해 history.go(1)을 호출할 때,
+  이는 popstate 핸들러 내부에서 발생 (사용자 활성화 컨텍스트 없음)
+- 브라우저가 후속 항목들을 "의심스러운" 것으로 취급할 수 있음
+```
+
+**결과:**
+- `router.back()` 버튼 클릭 → 사용자 활성화 → API 호출 → 동작함 ✅
+- 브라우저 뒤로가기 버튼 → 보안 정책 적용 → 항목을 건너뛰거나 실패할 수 있음 ❌
+
+### iOS Safari 특정 이슈 (iOS 16+)
+
+iOS Safari에는 추가적인 제한이 있습니다:
+
+1. **스와이프 뒤로가기 제스처가 popstate를 발생시키지 않을 수 있음** ([WebKit Bug 248303](https://bugs.webkit.org/show_bug.cgi?id=248303))
+   > "직접적인 사용자 상호작용 없이 추가된 히스토리 항목에 대해 스와이프 뒤로가기 제스처에서 popstate 이벤트가 발생하지 않습니다"
+
+2. **네트워크 요청 중 popstate 이벤트가 손실됨** ([WebKit Bug 158489](https://bugs.webkit.org/show_bug.cgi?id=158489))
+   - 이 이슈는 Chrome이나 Firefox에서는 발생하지 않습니다
+
+3. **페이지 캐시 동작이 다름** ([WebKit Bug 145953](https://bugs.webkit.org/show_bug.cgi?id=145953))
+   - pushState + 다른 곳으로 네비게이션 + 뒤로가기 후, Safari는 캐시에서 복원하는 대신 서버에서 페이지를 요청할 수 있습니다
+
+### 브라우저 동작 요약
+
+> ✅ = 정상 동작 / 이슈 없음 | ❌ = 이슈 있음 / 동작 안함
+
+| 동작 | Chrome | Safari Desktop | iOS Safari |
+|------|--------|----------------|------------|
+| `history.back()` API가 모든 항목을 존중 | ✅ | ✅ | ✅ |
+| 스와이프 뒤로가기에서 popstate 발생 (사용자 활성화 없이) | N/A | N/A | ❌ (iOS 16+) |
+| 네트워크 요청 중 popstate 안정적 | ✅ | ❌ | ❌ |
+| 뒤로가기 버튼이 History Manipulation Intervention 영향받음 | Yes | Yes | Yes |
+
+### 기술적 배경: history.go()는 비동기
+
+MDN은 명시적으로 설명합니다:
+
+> "이 메서드는 비동기입니다. 네비게이션이 완료되었을 때를 판단하려면 popstate 이벤트에 리스너를 추가하세요."
+> — [MDN: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
+
+이로 인해 타이밍 문제가 발생합니다:
+```javascript
+history.go(1);
+// ❌ 이 코드는 go(1)이 완료되기 전에 실행됨
+doSomething();
+
+// ✅ 올바른 방법: popstate를 기다림
+window.addEventListener('popstate', () => {
+  doSomething();
+});
+history.go(1);
+```
+
+### 권장 패턴
+
+핸들러 내에서 라우팅하는 대신, 다음 패턴을 사용하세요:
 
 ```typescript
-useRegisterBackNavigationHandler(
-  async () => {
-    router.push('/home'); // 리다이렉트 후 히스토리가 꼬임
-    return false;
-  },
-  { once: true }
-);
+// ✅ 좋음: 확인 다이얼로그 표시, 사용자가 결정
+useRegisterBackNavigationHandler(() => {
+  return window.confirm('저장되지 않은 변경사항이 있습니다. 그래도 나가시겠습니까?');
+});
+
+// ✅ 좋음: 오버레이/모달 닫고 네비게이션 차단
+useRegisterBackNavigationHandler(() => {
+  if (isModalOpen) {
+    closeModal();
+    return false; // 네비게이션 차단, 모달은 닫힘
+  }
+  return true; // 네비게이션 허용
+});
+
+// ❌ 나쁨: 핸들러 내에서 다른 페이지로 라우팅
+useRegisterBackNavigationHandler(() => {
+  router.push('/home'); // 이렇게 하지 마세요
+  return false;
+});
 ```
 
-### 브라우저별 동작
+### 반드시 리다이렉트해야 하는 경우
 
-| 브라우저 | 이슈 발생 여부 |
-|----------|---------------|
-| Chrome (Windows) | 발생 |
-| Mac Chrome | 발생 |
-| Android Chrome | 미확인 |
-| Mac Safari | 정상 동작 |
-| iOS Safari | 정상 동작 |
+사용 사례에서 반드시 뒤로가기 시 리다이렉트가 필요하다면, 다음을 인지하세요:
+- 리다이렉트된 페이지에서의 후속 뒤로가기 네비게이션이 예상치 않게 동작할 수 있습니다
+- 페이지 새로고침 후 브라우저 뒤로가기 버튼이 예상대로 동작하지 않을 수 있습니다
+- `router.back()` API는 동작하지만 브라우저 뒤로가기 버튼은 동작하지 않을 수 있습니다
+- 리다이렉트 후 사용자가 어디로 가는지 신경 쓰지 않는 경우에**만** 허용됩니다 (예: 퍼널 이탈 방지에서 앱을 떠나는 것이 허용되는 경우)
 
-> **Note**: Safari에서는 이 이슈가 발생하지 않습니다. Chrome 계열 브라우저에서만 확인된 문제입니다.
+### 참고 자료
 
-### 허용 가능한 케이스
-
-**뒤로가기 시 특정 페이지로 리다이렉트**하는 용도로 사용할 때는 이 한계를 받아들일 수 있습니다:
-
-```typescript
-// 퍼널 이탈 방지: 뒤로가기 시 홈으로 리다이렉트
-useRegisterBackNavigationHandler(
-  async () => {
-    router.push('/home');
-    return false;
-  },
-  { once: true }
-);
-```
-
-이 패턴의 의도는 사용자가 **이전 퍼널 단계로 돌아가지 못하게 막는 것**입니다. 리다이렉트된 페이지에서 다시 뒤로가기 시 앱 외부로 나가더라도, 원래 목적(특정 페이지를 뒤로가기로 다시 도달하지 못하게하는 것)은 달성되므로 이 한계를 수용할 수 있습니다.
+- [Chromium History Manipulation Intervention](https://chromium.googlesource.com/chromium/src/+/refs/heads/lkgr/docs/history_manipulation_intervention.md)
+- [WebKit Bug 248303: 스와이프 뒤로가기에서 popstate가 발생하지 않음](https://bugs.webkit.org/show_bug.cgi?id=248303)
+- [WebKit Bug 158489: 네트워크 요청 중 popstate 손실](https://bugs.webkit.org/show_bug.cgi?id=158489)
+- [MDN: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
+- [WHATWG HTML Issue #7832: History traversal user gesture](https://github.com/whatwg/html/issues/7832)
 
 ---
 
@@ -140,5 +240,16 @@ useRegisterBackNavigationHandler(
 | 한계 | 영향 | 대응 |
 |------|------|------|
 | 동일 App 내 History 필요 | 외부 진입 시 동작 안 함 | 사용자에게 안내 또는 별도 처리 필요 |
-| 핸들러 내 router.push/replace | 히스토리 꼬임 (Chrome 전용, Safari 정상) | 퍼널 이탈 방지 목적이면 한계 수용 |
+| 핸들러 내 router.push/replace | 예측 불가능한 네비게이션, 새로고침 후 브라우저 뒤로가기 버튼이 실패하지만 `router.back()`은 동작 | **사용 금지** - 다이얼로그 표시 또는 오버레이 닫기 권장 |
 | 삼성 인터넷 "뒤로가기 리디렉션 차단" | 뒤로가기 차단 불가 | Fallback으로 오버레이 unmount |
+
+### 핵심 요약
+
+브라우저의 History API에는 우회할 수 없는 근본적인 보안 제한이 있습니다:
+
+1. **브라우저 뒤로가기 버튼**은 히스토리 항목을 건너뛸 수 있는 보안 정책을 적용합니다
+2. **`history.back()` API**는 모든 항목을 존중하지만 사용자 활성화 컨텍스트가 필요합니다
+3. **페이지 새로고침 후**, 라이브러리는 핸들러가 없는 페이지에서 네비게이션을 신뢰성 있게 가로챌 수 없습니다
+4. **iOS Safari**에는 popstate 이벤트에 대한 추가 제한이 있습니다
+
+**가장 안전한 패턴**: 핸들러는 확인 다이얼로그 표시 또는 오버레이 닫기에만 사용하세요. 핸들러 내에서 라우팅을 수행하지 마세요.

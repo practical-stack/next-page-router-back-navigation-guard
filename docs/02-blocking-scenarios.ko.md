@@ -147,7 +147,7 @@ isNavigationConfirmed 플래그 확인
     history.go(1) 호출 → URL 복원 (앞으로 이동)
           │
           ▼
-    setTimeout: 비동기 handler 콜백 실행
+    requestAnimationFrame + setTimeout: 비동기 handler 콜백 실행
           │
           ├── Cancel (handler가 false 반환)
           │     └→ 현재 페이지 유지
@@ -174,6 +174,19 @@ isNavigationConfirmed 플래그 확인
 - 이는 또 다른 popstate 이벤트를 발생시키고, 다시 token mismatch로 감지됨
 - `isNavigationConfirmed` 플래그로 이 후속 popstate를 허용 처리
 - **중요**: 플래그는 반드시 `history.back()` 호출 전에 설정해야 함
+
+**왜 `pendingHandlerExecution` 패턴 대신 `requestAnimationFrame + setTimeout`을 사용하는가?**
+
+내부 네비게이션(시나리오 6)에서는 `pendingHandlerExecution`과 `historyIndexDelta === 0`을 사용해 `history.go()` 완료를 감지합니다. 하지만 token mismatch에서는 이 방식이 **동작하지 않습니다**:
+
+- 페이지 새로고침 후, 모든 history entry가 **이전 세션 토큰**을 가짐
+- 모든 후속 popstate가 여전히 `isSessionTokenMismatch`를 발생시킴
+- 새로고침 후 `historyIndex` 추적이 신뢰할 수 없어 delta 기반 감지 불가
+
+대신 `requestAnimationFrame(() => setTimeout(..., 0))`으로 브라우저 안정화를 대기합니다:
+1. `requestAnimationFrame` - 브라우저 렌더링 완료 보장
+2. `setTimeout(0)` - 대기 중인 microtask와 이벤트 처리 완료 보장
+3. `setTimeout(0)` 단독 사용보다 비동기 history 네비게이션에 더 안정적
 
 ---
 
