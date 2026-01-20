@@ -12,7 +12,7 @@
 4. [시나리오 3: 다단계 히스토리 이동](#시나리오-3-다단계-히스토리-이동)
 5. [시나리오 4: Token Mismatch](#시나리오-4-token-mismatch)
 6. [시나리오 5: router.back()](#시나리오-5-routerback)
-7. [시나리오 6: 핸들러에서 router.push()로 리다이렉트](#시나리오-6-핸들러에서-routerpush로-리다이렉트)
+7. [시나리오 6: 뒤로가기 시 리다이렉트](#시나리오-6-뒤로가기-시-리다이렉트)
 8. [내부 처리 시나리오](#내부-처리-시나리오)
 9. [전체 흐름도](#전체-흐름도)
 
@@ -213,18 +213,85 @@ popstate event fired
 
 ---
 
-## 시나리오 6: 핸들러에서 router.push()로 리다이렉트
+## 시나리오 6: 뒤로가기 시 리다이렉트
 
-**상황**: 핸들러가 뒤로가기를 차단하고 다른 페이지로 리다이렉트
+**상황**: 뒤로가기를 허용하는 대신 다른 페이지로 리다이렉트
+
+### 안전한 패턴 (권장)
+
+**모달을 열고 사용자가 버튼을 클릭하게** 하여 네비게이션을 트리거합니다:
 
 ```tsx
+useRegisterBackNavigationHandler(() => {
+  // 1. 모달 열기 (fire-and-forget, await 없음)
+  overlay.open(({ isOpen, close }) => (
+    <RedirectModal
+      isOpen={isOpen}
+      close={close}
+      onConfirm={() => router.push("/target-page")}  // 사용자 클릭 → 네비게이션
+    />
+  ));
+  
+  // 2. 즉시 반환 - 핸들러 완료
+  return false;
+});
+```
+
+#### 왜 동작하는가
+
+```
+뒤로가기 버튼 클릭
+    │
+    ▼
+핸들러 실행
+    │
+    ├── 모달 열기 (동기, fire-and-forget)
+    │
+    └── false 즉시 반환
+          │
+          ▼
+    뒤로가기 차단, URL 복원
+          │
+          ▼
+    사용자에게 "대상 페이지로 이동" 버튼이 있는 모달 표시
+          │
+          ▼
+    사용자가 버튼 클릭 (사용자 활성화!)
+          │
+          ▼
+    router.push('/target-page') 실행
+          │
+          ▼
+    네비게이션 성공 ✅
+```
+
+#### 구현 참고사항
+
+1. **Fire-and-forget**: 모달을 `await`하지 마세요. 핸들러는 동기적으로 반환해야 합니다.
+2. **사용자 활성화**: 버튼 클릭이 "사용자 활성화"를 제공하며, 브라우저는 보안 이벤트 후 네비게이션에 이를 요구합니다.
+3. **모달 상태**: `overlay-kit`같은 자체 상태를 관리하는 오버레이/모달 라이브러리를 사용하면 핸들러 반환 후에도 모달이 유지됩니다.
+
+---
+
+### 위험한 패턴 (권장하지 않음)
+
+핸들러 내부에서 직접 `router.push()` 호출:
+
+```tsx
+// ⚠️ 권장하지 않음 - 페이지 새로고침 후 문제 발생
 useRegisterBackNavigationHandler(() => {
   router.push('/different-page');  // 뒤로가기 대신 리다이렉트
   return false;  // 원래 뒤로가기 차단
 });
 ```
 
-### 왜 까다로운가
+#### 왜 문제가 되는가
+
+이 패턴은 일반 조건에서는 동작하지만 **페이지 새로고침 후 실패**합니다:
+- 브라우저 보안 정책이 사용자 활성화 없이 네비게이션을 차단할 수 있음
+- `history.go()` 완료와 `router.push()` 타이밍이 예측 불가능해짐
+
+#### 내부 구현 (처리 방식)
 
 뒤로가기가 감지되면 핸들러가 실행되고 `router.push()`를 호출합니다. 하지만 `history.go()`는 **비동기**(MDN 참조)이므로, 핸들러를 즉시 실행하면 히스토리 스택이 손상될 수 있습니다:
 
@@ -238,8 +305,6 @@ useRegisterBackNavigationHandler(() => {
 4. history.go(-delta)가 push 이후에 완료됨
    → 히스토리 스택 손상!
 ```
-
-### MDN 준수 해결책
 
 `delta = 0`인 popstate 이벤트를 수신하여 `history.go()` 완료를 대기합니다:
 
@@ -277,12 +342,28 @@ useRegisterBackNavigationHandler(() => {
 > **MDN 참조**: "이 메서드는 비동기입니다. popstate 이벤트 리스너를 추가하여 네비게이션 완료 시점을 알 수 있습니다."
 > — [MDN Web Docs: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
 
-### 관련 상태
+#### 관련 상태
 
 | 상태 | 목적 |
 |------|------|
 | `pendingHandlerExecution` | history.go() 완료 대기 중일 때 true |
 | `pendingHistoryIndexDelta` | 핸들러 승인 후 네비게이션을 위한 저장된 delta |
+
+---
+
+### 비교
+
+| 측면 | 안전한 패턴 | 위험한 패턴 |
+|------|-------------|-------------|
+| `router.push()` 호출 위치 | 버튼 onClick 내부 | 핸들러 내부 |
+| 사용자 활성화 | 있음 (버튼 클릭) | 없음 |
+| 핸들러 반환 시점 | 즉시 (`false`) | `router.push()` 후 |
+| 새로고침 후 | ✅ 정상 동작 | ❌ 실패할 수 있음 |
+
+### 예제 파일
+
+- 안전한 패턴: `example/src/pages/redirect-safe.tsx`
+- 위험한 패턴: `example/src/pages/redirect.tsx`
 
 ---
 
