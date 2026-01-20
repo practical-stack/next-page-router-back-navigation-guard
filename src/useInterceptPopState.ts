@@ -174,25 +174,27 @@ function createPopstateHandler(
       interceptionStateContext.setState({ isRestoringUrl: true });
       window.history.go(1);
 
-      // history.go(1) triggers a popstate event which is handled above (isRestoringUrl check).
-      // setTimeout(0) simply defers execution to the next event loop tick, so this runs
-      // after the synchronous popstate handler, but it does NOT wait for navigation to complete.
-      // For a more explicit MDN-style async handling pattern, see the pendingHandlerExecution
-      // logic used below. @see https://developer.mozilla.org/en-US/docs/Web/API/History/go
-      setTimeout(async () => {
-        interceptionStateContext.setState({ isRestoringUrl: false });
-        const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(handlerContext, "");
-        if (shouldAllowNavigation) {
-          if (DEBUG) console.log(`[SessionTokenMismatch] Handler confirmed`);
-          renderedStateContext.setStateAndSyncToHistory(
-            computeNextRenderedState(nextSessionToken, nextHistoryIndex)
-          );
-          interceptionStateContext.setState({ isNavigationConfirmed: true });
-          window.history.back();
-        } else {
-          if (DEBUG) console.log(`[SessionTokenMismatch] Handler blocked`);
-        }
-      }, 0);
+      // NOTE: We cannot use the pendingHandlerExecution pattern (waiting for historyIndexDelta === 0)
+      // here because after refresh, ALL history entries have the old session token. Every subsequent
+      // popstate will still trigger isSessionTokenMismatch, making delta-based detection unreliable.
+      // Instead, we use rAF + setTimeout to wait for browser to settle after history.go(1).
+      // @see https://developer.mozilla.org/en-US/docs/Web/API/History/go
+      requestAnimationFrame(() => {
+        setTimeout(async () => {
+          interceptionStateContext.setState({ isRestoringUrl: false });
+          const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(handlerContext, "");
+          if (shouldAllowNavigation) {
+            if (DEBUG) console.log(`[SessionTokenMismatch] Handler confirmed`);
+            renderedStateContext.setStateAndSyncToHistory(
+              computeNextRenderedState(nextSessionToken, nextHistoryIndex)
+            );
+            interceptionStateContext.setState({ isNavigationConfirmed: true });
+            window.history.back();
+          } else {
+            if (DEBUG) console.log(`[SessionTokenMismatch] Handler blocked`);
+          }
+        }, 0);
+      });
       return false;
     }
 
