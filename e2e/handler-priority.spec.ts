@@ -92,7 +92,7 @@ test.describe("Navigation Guard - Priority Order", () => {
     await expect(page.getByTestId("active-priorities")).toContainText("0");
 
     await page.getByTestId("back-button").click();
-    await expect(page.getByText("Priority 0 Handler")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Priority 0 Handler" })).toBeVisible();
     await page.getByTestId("confirm-dialog-cancel").click();
 
     await page.waitForTimeout(500);
@@ -112,7 +112,7 @@ test.describe("Navigation Guard - Priority Order", () => {
     await expect(page.getByTestId("active-priorities")).toContainText("0");
 
     await page.goBack();
-    await expect(page.getByText("Priority 0 Handler")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Priority 0 Handler" })).toBeVisible();
     await page.getByTestId("confirm-dialog-cancel").click();
 
     await page.waitForTimeout(500);
@@ -133,7 +133,7 @@ test.describe("Navigation Guard - Priority Order", () => {
     await page.getByTestId("toggle-priority-3").click();
 
     await page.getByTestId("back-button").click();
-    await expect(page.getByText("Priority 2 Handler")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Priority 2 Handler" })).toBeVisible();
     await page.getByTestId("confirm-dialog-cancel").click();
 
     await page.waitForTimeout(500);
@@ -154,7 +154,7 @@ test.describe("Navigation Guard - Priority Order", () => {
     await page.getByTestId("toggle-priority-3").click();
 
     await page.goBack();
-    await expect(page.getByText("Priority 2 Handler")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Priority 2 Handler" })).toBeVisible();
     await page.getByTestId("confirm-dialog-cancel").click();
 
     await page.waitForTimeout(500);
