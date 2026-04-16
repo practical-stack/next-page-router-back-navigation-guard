@@ -263,7 +263,75 @@ useRegisterBackNavigationHandler(() => {
 
 ---
 
-## 3. Samsung Internet Browser "Block Backward Redirections" Feature
+## 3. After Refresh, Forward Navigation Is Treated as Back Navigation
+
+**After a page refresh, forward navigation may be misdetected as back navigation.**
+
+### Why This Happens
+
+After refresh, restoring the previous session token is structurally impossible because Next.js Pages Router overwrites `history.state` during initialization.
+
+That means:
+
+- `initializeHistoryStateSyncOnce()` always creates a new session token
+- Existing history entries still contain the previous session token
+- Every subsequent `popstate` after refresh becomes a **session token mismatch**
+- In a token mismatch state, the library cannot reliably distinguish **back** from **forward**
+
+As a result, the library falls back to treating the navigation as back navigation and tries to restore the current URL with `history.go(1)`.
+
+### Problem Scenario
+
+```
+History: [A] → [B] → [C]
+Current location: B (after refresh)
+
+User clicks Forward (B → C)
+    │
+    ▼
+popstate fires, browser URL already changed to C
+    │
+    ▼
+Token mismatch detected
+    │
+    ▼
+Library assumes "back navigation"
+    │
+    ▼
+history.go(1) runs to restore URL
+    │
+    ├── If C is the last entry: nothing happens
+    └── If D exists after C: browser may move to D unexpectedly
+```
+
+### Side Effects
+
+| Problem | Description |
+|---------|-------------|
+| Unnecessary handler execution | A "leave page?" dialog may appear during forward navigation |
+| User confusion | User intended to go forward, but the UI behaves like back navigation |
+| Wrong navigation target | If navigation is later allowed, the browser may go to a page different from the user's intended destination |
+| History position drift | `history.go(1)` can move to an unintended later entry if the current target is not the end of history |
+
+### Why This Is Structural
+
+This is not a timing bug that can be fully fixed inside the library. It comes from the Pages Router architecture:
+
+- the browser changes URL before JavaScript can intervene
+- Next.js Pages Router replaces `history.state` on load
+- the previous session token cannot be recovered after refresh
+
+Because of that, **direction detection after refresh is fundamentally unreliable**.
+
+### References
+
+- [MDN: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
+- [Why This Library - Problem 3: Refresh and External Entry Detection](./01-why-this-library.md#problem-3-refresh-and-external-entry-detection)
+- [Blocking Scenarios - Token Mismatch](./02-blocking-scenarios.md#scenario-4-token-mismatch-after-refresh)
+
+---
+
+## 4. Samsung Internet Browser "Block Backward Redirections" Feature
 
 | Problem | Cause |
 |---------|-------|
@@ -290,6 +358,7 @@ On Samsung Internet Browser, **instead of blocking back navigation, all overlays
 |------------|--------|----------|
 | Requires history within same app | Doesn't work on external entry | Notify user or implement separate handling |
 | router.push/replace in handler | Unpredictable navigation, browser back button may fail after refresh | Use **Safe Redirect Pattern** (modal + button click) |
+| Forward navigation after refresh | May be handled like back navigation due to session token mismatch | Structural limitation (cannot be fully resolved in Pages Router) |
 | Samsung Internet "Block backward redirections" | Cannot block back navigation | Fallback to unmount overlays |
 
 ### Key Takeaway
@@ -299,7 +368,8 @@ The browser's History API has fundamental security restrictions that cannot be b
 1. **Browser back button** applies security policies that may skip history entries
 2. **`history.back()` API** respects all entries but requires user activation context
 3. **After page refresh**, the library cannot reliably intercept navigation on pages without handlers
-4. **iOS Safari** has additional restrictions on popstate events
+4. **After page refresh**, the library also cannot reliably distinguish forward navigation from back navigation
+5. **iOS Safari** has additional restrictions on popstate events
 
 **The safest patterns**:
 - Use handlers for **confirmation dialogs** or **closing overlays**
