@@ -170,8 +170,13 @@ Reference: https://github.com/microsoft/playwright/issues/23210
 See [Limitations](./docs/07-limitation.md) for known limitations including:
 - Requires history within the same app (doesn't work on first page entry)
 - **Do NOT use `router.push/replace` inside handler** — causes unpredictable navigation behavior due to browser security policies
+- After page refresh, forward navigation may be treated like back navigation due to session token mismatch
 - Samsung Internet Browser "Block backward redirections" feature (enabled by default)
 
 ## Example
 
 Try the [Live Demo](https://practical-stack.github.io/next-page-router-back-navigation-guard/) or see the source code in `example/` directory.
+
+---
+
+- [한국어](./README.ko.md)
