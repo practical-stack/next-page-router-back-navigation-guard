@@ -167,7 +167,12 @@ isNavigationConfirmed 플래그 확인
 
 **Token Mismatch 감지 조건**:
 - `history.state`에 `__next_session_token` 없음
-- 또는 token이 현재 세션과 불일치 (새로고침 시 재생성)
+- 또는 token이 현재 세션과 불일치 (새로고침 후 흔함)
+
+**중요한 기술적 한계**:
+- 이 흐름은 이전 세션 토큰을 복원하는 것이 아님
+- 새로고침 후에는 Next.js Pages Router가 현재 `history.state`를 덮어씀
+- 라이브러리는 새 현재 세션 토큰을 만들고, 이전 entry들을 다른 세션으로 취급함
 
 **isNavigationConfirmed 플래그**:
 - handler가 네비게이션을 허용하면 (true 반환) `history.back()` 호출
@@ -187,6 +192,12 @@ isNavigationConfirmed 플래그 확인
 1. `requestAnimationFrame` - 브라우저 렌더링 완료 보장
 2. `setTimeout(0)` - 대기 중인 microtask와 이벤트 처리 완료 보장
 3. `setTimeout(0)` 단독 사용보다 비동기 history 네비게이션에 더 안정적
+
+**외부 도메인 진입은 인터셉트 가능한 케이스가 아닙니다**:
+
+사용자가 다른 origin으로 이동하면 현재 페이지는 언로드됩니다. 이 라이브러리는
+앱이 살아 있는 동안 발생한 `popstate`만 처리할 수 있으므로, 외부 도메인으로
+나갔다 돌아오는 동작 자체를 제어하는 것은 범위 밖입니다.
 
 ---
 

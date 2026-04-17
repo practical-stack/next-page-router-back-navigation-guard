@@ -26,9 +26,15 @@ export function parseHistoryState(historyState: NextHistoryState = {}): ParsedHi
 /**
  * Checks if there's a session token mismatch.
  *
+ * After a page refresh, mismatch ALWAYS occurs: Next.js Pages Router overwrites
+ * `history.state` before this library initializes, so the previous session's
+ * token cannot be restored. initializeHistoryStateSyncOnce() always starts with
+ * a fresh token, and older history entries still carry the previous session's
+ * token — so every popstate after refresh lands here.
+ *
  * Mismatch occurs when:
- * - Token is missing (page refresh, external entry, direct URL)
- * - Token doesn't match current session (shouldn't happen in normal flow)
+ * - Token is missing (first visit, older entry without our metadata)
+ * - Token doesn't match current session (always the case after refresh)
  */
 export function hasSessionTokenMismatch(
   nextSessionToken: string | undefined,

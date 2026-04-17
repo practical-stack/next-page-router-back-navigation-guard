@@ -167,7 +167,12 @@ isNavigationConfirmed flag check
 
 **Token Mismatch Detection**:
 - `history.state` has no `__next_session_token`
-- Or token doesn't match current session (regenerated after refresh)
+- Or token doesn't match current session (common after refresh)
+
+**Important technical limit**:
+- This flow does **not** restore the previous session token
+- After refresh, Next.js Pages Router overwrites the current `history.state`
+- The library creates a new current-session token and treats older entries as a different session
 
 **isNavigationConfirmed Flag**:
 - When handler confirms navigation (returns true), we call `history.back()`
@@ -187,6 +192,12 @@ Instead, we use `requestAnimationFrame(() => setTimeout(..., 0))` to wait for th
 1. `requestAnimationFrame` ensures the browser has completed rendering
 2. `setTimeout(0)` ensures pending microtasks and events are processed
 3. This is more reliable than `setTimeout(0)` alone for async history navigation
+
+**External domain entry is not an interceptable case**:
+
+If the user leaves your app for another origin, your page is unloaded and this
+library cannot run. The token-mismatch flow applies only to `popstate` events
+that happen while your app is still active.
 
 ---
 

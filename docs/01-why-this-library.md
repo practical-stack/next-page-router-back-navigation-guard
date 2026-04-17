@@ -318,8 +318,10 @@ But browser support is limited:
 |---------|----------------|
 | Chrome | Supported (102+) |
 | Edge | Supported (102+) |
-| Safari | **Not supported** |
-| Firefox | **Not supported** |
+| Safari | Supported (26.4+) |
+| Firefox | Supported (149+) |
+
+Global support is ~87.8% ([caniuse](https://caniuse.com/mdn-api_navigation)), but Safari/Firefox only shipped recently — a large share of real-world users still run older versions without the API. A fallback that works on every browser is still required.
 
 ### Solution: Index Tracking System
 
@@ -353,9 +355,15 @@ if (delta < 0) {
 
 ---
 
-## Problem 3: Refresh and External Entry Detection
+## Problem 3: Refresh Creates a New Session Boundary
 
-### When State Disappears
+### What Actually Breaks After Refresh
+
+The tricky case is not "restoring the old token." That part is impossible.
+
+After a page refresh, Next.js Pages Router overwrites `history.state` during its
+own initialization, before our provider mounts. That destroys our access to the
+previous session token for the current entry.
 
 JavaScript state is lost in these scenarios:
 
@@ -365,13 +373,10 @@ JavaScript state is lost in these scenarios:
 
 **2. Page refresh:**
 - JavaScript memory cleared
-- All tracking data is gone
+- Next.js replaces the current `history.state`
+- The previous session token for the current entry is no longer recoverable
 
-**3. Back navigation from external domain:**
-- User went: Our app → Google → Back button
-- `history.state` has no data from our library
-
-### Solution: Token-Based Session Identification
+### Solution: Token-Based Session Boundary Detection
 
 We generate a unique token per session:
 
@@ -391,14 +396,14 @@ const modifiedState = {
 };
 ```
 
-On popstate, we detect special situations:
+On popstate, we detect when the next entry belongs to a different session:
 
 ```typescript
 const token = nextState.__next_session_token;
 
 const isTokenMismatch =
-  !token ||  // No token (external domain entry)
-  token !== renderedStateRef.current.token;  // Mismatch (after refresh)
+  !token ||  // Missing session metadata
+  token !== renderedStateRef.current.token;  // Mismatch (common after refresh)
 ```
 
 ### Scenario Examples
@@ -410,18 +415,29 @@ After:  currentToken = "xyz789" (new), history.state.token = "abc123" (old)
 → Token mismatch detected!
 ```
 
-**External domain entry:**
-```
-At google.com, user clicks back:
-  nextState.__next_session_token = undefined
-→ No token! Handle as token mismatch.
-```
-
 **Normal internal navigation:**
 ```
 currentToken = "abc123", nextState.token = "abc123"
 → Token matches ✓ Normal handling.
 ```
+
+### Why the Old Token Cannot Be Restored
+
+The sequence on refresh is:
+
+1. Browser restores the existing `history.state`
+2. Next.js Pages Router initializes and calls `replaceState(...)`
+3. Our provider mounts afterward and sees only Next.js's new state
+
+So after refresh, we cannot recover the previous session token. The library does
+not restore that token; it generates a new token for the new session and treats
+older history entries as belonging to a different session.
+
+### Important Scope Limit: External Domain Back Is Not Intercepted
+
+When the user leaves your site for another domain, your page is unloaded. That
+navigation is outside this library's control, and there is no `popstate` event
+for us to intercept while your app is gone.
 
 ---
 
@@ -431,7 +447,7 @@ currentToken = "abc123", nextState.token = "abc123"
 |---------|-------|----------|
 | **URL Restoration** | Browser changes URL before JS runs | `history.go()` to restore URL |
 | **Direction Detection** | popstate fires for both back/forward | Patch pushState to inject index, calculate delta |
-| **Session Detection** | State lost on refresh/external entry | Token-based session identification |
+| **Session Boundary Detection** | Previous session token cannot be recovered after refresh | Generate a new token and detect mismatch |
 
 Next.js Pages Router provides `beforePopState` to intercept navigation, but leaves the hard problems to you. This library solves them.
 

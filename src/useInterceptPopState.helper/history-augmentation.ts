@@ -36,8 +36,16 @@ let _setRenderedStateAndSyncToHistory: (params: {
 }) => void = () => {};
 
 /**
- * Generates a random session token to identify the current browser session.
- * Used to detect page refresh or external domain entry.
+ * Generates a random session token.
+ *
+ * Each page load always produces a new token. Next.js Pages Router overwrites
+ * `history.state` during initialization, before this library's provider mounts,
+ * so the previous session's token cannot be recovered. As a consequence, every
+ * popstate event after a refresh (both back and forward) is seen as a token
+ * mismatch, which means forward navigation is also treated like back navigation.
+ *
+ * Note: back navigation from an external domain does not fire a popstate in
+ * this document's context and is therefore outside this library's scope.
  */
 export function generateSessionToken(): string {
   return Math.random().toString(36).substring(2);
@@ -61,9 +69,10 @@ function setRenderedState(renderedState: RenderedState): void {
  * Initializes history state synchronization (singleton - only runs once).
  *
  * This function:
- * 1. Patches history.pushState to increment historyIndex on each call
- * 2. Patches history.replaceState to maintain current index
- * 3. Injects session token and index into history.state for tracking
+ * 1. Starts with a fresh session token and initial historyIndex (0)
+ * 2. Patches history.pushState to increment historyIndex on each call
+ * 3. Patches history.replaceState to maintain current index
+ * 4. Injects session token and index into history.state for tracking
  *
  * @returns Object with setRenderedStateAndSyncToHistory function
  */
@@ -90,11 +99,14 @@ export function initializeHistoryStateSyncOnce(): {
     };
   }
 
-  // Initialize state from existing history.state (if available)
-  // Note: String() wrapper ensures parseInt receives a string even when value is number/undefined
+  // Always start with a fresh session.
+  // Next.js Pages Router overwrites history.state during its own initialization
+  // (before this provider mounts), so the previous session's token and index on
+  // the current history entry are not readable here. We do not attempt to
+  // restore them and instead generate a brand-new session token.
   setRenderedState({
-    historyIndex: parseInt(String(window.history.state?.__next_navigation_stack_index ?? "0"), 10) || 0,
-    sessionToken: String(window.history.state?.__next_session_token ?? "") || generateSessionToken(),
+    historyIndex: 0,
+    sessionToken: generateSessionToken(),
   });
 
   if (DEBUG) {

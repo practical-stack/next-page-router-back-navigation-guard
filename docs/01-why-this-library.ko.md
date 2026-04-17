@@ -301,8 +301,10 @@ navigation.currentEntry.index  // 현재 index
 |---------|----------------|
 | Chrome | ✅ (102+) |
 | Edge | ✅ (102+) |
-| Safari | ❌ |
-| Firefox | ❌ |
+| Safari | ✅ (26.4+) |
+| Firefox | ✅ (149+) |
+
+글로벌 지원율은 ~87.8% ([caniuse](https://caniuse.com/mdn-api_navigation))지만, Safari·Firefox는 최근 버전에서야 지원이 추가됐기 때문에 구버전 사용자 비율이 여전히 큽니다. 모든 브라우저에서 동작하는 fallback이 필요합니다.
 
 ### 해결책: history.pushState를 patch해서 index 주입
 
@@ -334,9 +336,17 @@ if (delta < 0) {
 
 ---
 
-## 문제 3: 새로고침 및 외부 진입 감지
+## 문제 3: 새로고침 후 새 세션 경계가 생김
 
-### JavaScript state가 사라지는 경우
+### 새로고침 후 실제로 벌어지는 일
+
+핵심은 "이전 토큰 복원"이 아닙니다. 그건 구조적으로 불가능합니다.
+
+페이지 새로고침 후에는 Next.js Pages Router가 우리 Provider가 마운트되기 전에
+`history.state`를 덮어씁니다. 그래서 현재 entry에 있던 이전 세션 토큰에 다시
+접근할 수 없습니다.
+
+JavaScript state가 사라지는 경우:
 
 **1. 첫 방문:**
 - 앱 내 이전 history 없음
@@ -344,13 +354,10 @@ if (delta < 0) {
 
 **2. 새로고침:**
 - JavaScript 메모리 초기화
-- 모든 tracking 데이터 손실
+- Next.js가 현재 `history.state`를 교체
+- 현재 entry의 이전 세션 토큰 복원 불가
 
-**3. 외부 도메인에서 뒤로가기:**
-- 경로: 우리 앱 → google.com → 뒤로가기
-- `history.state`에 우리 데이터 없음
-
-### 해결책: Token 기반 session 식별
+### 해결책: Token 기반 세션 경계 식별
 
 Session마다 고유 token 생성:
 
@@ -370,14 +377,14 @@ const modifiedState = {
 };
 ```
 
-popstate에서 token 검사:
+popstate에서 다음 entry가 다른 세션인지 검사:
 
 ```typescript
 const token = nextState.__next_session_token;
 
 const isTokenMismatch =
-  !token ||  // token 없음 (외부 진입)
-  token !== renderedStateRef.current.token;  // mismatch (새로고침)
+  !token ||  // 세션 메타데이터 없음
+  token !== renderedStateRef.current.token;  // mismatch (새로고침 후 흔함)
 ```
 
 ### 시나리오 예시
@@ -389,18 +396,29 @@ After:  currentToken = "xyz789" (new), history.state.token = "abc123" (old)
 → Token mismatch!
 ```
 
-**외부 도메인 진입:**
-```
-google.com에서 뒤로가기:
-  nextState.__next_session_token = undefined
-→ Token 없음 → mismatch 처리
-```
-
 **정상 navigation:**
 ```
 currentToken = "abc123", nextState.token = "abc123"
 → Token 일치 ✓
 ```
+
+### 왜 이전 토큰을 복원할 수 없는가
+
+새로고침 시 순서는 다음과 같습니다:
+
+1. 브라우저가 기존 `history.state`를 복원
+2. Next.js Pages Router가 초기화되며 `replaceState(...)` 호출
+3. 그 다음에 우리 Provider가 마운트되어 Next.js가 덮어쓴 state만 보게 됨
+
+즉, 새로고침 후에는 이전 세션 토큰을 복구할 수 없습니다. 이 라이브러리는
+이전 토큰을 복원하지 않고, 새 세션용 토큰을 새로 만들고 이전 history entry를
+다른 세션으로 간주합니다.
+
+### 중요한 범위 제한: 외부 도메인으로 나갔다 돌아오는 동작은 인터셉트 대상이 아님
+
+사용자가 다른 origin으로 이동하면 현재 페이지는 언로드됩니다. 그 상태에서는
+이 라이브러리가 실행될 수 없고, 우리 앱이 비활성 상태인 동안 발생한 이동은
+`popstate`로 제어할 수 없습니다.
 
 ---
 
@@ -410,7 +428,7 @@ currentToken = "abc123", nextState.token = "abc123"
 |------|------|--------|
 | **URL 복원** | 브라우저가 JS 전에 URL 변경 | `history.go()`로 복원 |
 | **방향 감지** | popstate가 양방향 모두 발생 | pushState patch로 index 주입 |
-| **Session 감지** | 새로고침/외부 진입 시 state 손실 | Token 기반 식별 |
+| **세션 경계 감지** | 새로고침 후 이전 세션 토큰 복원 불가 | 새 토큰 생성 + mismatch 감지 |
 
 Next.js는 `beforePopState`로 navigation intercept 방법은 제공하지만, 어려운 문제들은 개발자에게 맡깁니다. 이 라이브러리가 그 문제들을 해결합니다.
 

@@ -120,12 +120,22 @@ function createPopstateHandler(
     }
 
     // ========================================
-    // Session Token Mismatch (Refresh or External Entry)
+    // Session Token Mismatch (Back After Refresh)
     // ========================================
-    // Occurs when:
-    // - User refreshes the page (new session, no token in history.state)
-    // - User enters from external domain or direct URL
-    // - Token in history.state doesn't match current session token
+    // After a page refresh, Token Mismatch ALWAYS happens.
+    // Next.js Pages Router overwrites `history.state` on initialization, so the
+    // previous session's token cannot be recovered. initializeHistoryStateSyncOnce()
+    // always starts with a fresh token, which then mismatches the token stored on
+    // older history entries.
+    //
+    // Because the previous session's historyIndex is no longer trustworthy, we
+    // cannot tell back from forward navigation in this branch. We assume back
+    // and restore the URL with history.go(1). This means forward navigation
+    // after a refresh is also misdetected as back navigation. That is a
+    // structural limitation of Pages Router — see docs/07-limitation.md.
+    //
+    // Note: back navigation from an external domain does not fire a popstate
+    // in this document's context and is therefore not handled here.
     //
     // Strategy: Use history.go(1) to restore URL, then run handlers.
     // If approved, set isNavigationConfirmed and call history.back().
