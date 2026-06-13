@@ -93,6 +93,7 @@ Next.js has no official API to cancel navigation. Community discussions (#9662, 
 - Solution: Patch `history.pushState()` to inject custom metadata into `history.state`:
   - `__next_navigation_stack_index` - Position in history stack
   - `__next_session_token` - Unique identifier for current session
+- On initialization: `history.state` is read at module-evaluation time (before Next.js router hydration overwrites it), capturing the previous session token and index. If present, `initializeHistoryStateSyncOnce()` restores them so a refresh keeps the session continuous rather than starting a new one.
 - On popstate: calculate `historyIndexDelta = nextHistoryIndex - currentHistoryIndex`
 - If delta < 0 (back navigation): restore URL with `history.go(-delta)`, run handler
 - If delta > 0 (forward navigation): allow without blocking
@@ -100,8 +101,8 @@ Next.js has no official API to cancel navigation. Community discussions (#9662, 
 ### Token-based Session Identification
 
 Session token (`sessionToken`) in `history.state` identifies the current session:
-- Token mismatch (refresh, external domain entry): use `history.go(1)` to restore
-- Token match (normal back navigation): use `history.go(-delta)` to restore
+- Token mismatch (genuine session boundary — missing token or cross-session entry): use `history.go(1)` to restore
+- Token match (normal back navigation, including after refresh): use `history.go(-delta)` to restore
 
 ### Pages Router Implementation
 
@@ -130,7 +131,7 @@ This ensures `history.go()` completes before handlers execute, preventing histor
 E2E tests in `e2e/navigation-guard.spec.ts` test core scenarios:
 1. Browser back button navigation guard
 2. `router.back()` navigation guard
-3. **After refresh (token mismatch)** - Tests navigation guard behavior after page reload
+3. **After refresh** - Tests navigation guard behavior after page reload (token restored at module-eval; treated as normal session)
 
 ### Firefox-specific Configuration
 

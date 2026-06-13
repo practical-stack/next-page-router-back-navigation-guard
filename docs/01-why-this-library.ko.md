@@ -11,7 +11,7 @@
 3. [Next.js가 해결하지 않는 문제](#nextjs가-해결하지-않는-문제)
 4. [문제 1: URL 복원](#문제-1-url-복원)
 5. [문제 2: 뒤로가기 vs 앞으로가기 구분](#문제-2-뒤로가기-vs-앞으로가기-구분)
-6. [문제 3: 새로고침 및 외부 진입 감지](#문제-3-새로고침-및-외부-진입-감지)
+6. [문제 3: 새로고침과 세션 토큰 복구](#문제-3-새로고침과-세션-토큰-복구)
 7. [정리](#정리)
 
 ---
@@ -251,20 +251,20 @@ User clicks back button
 
 ### 해결책: history.go()로 URL 복원
 
-**Token mismatch (새로고침/외부 진입):**
+**Token mismatch (진짜 세션 경계 — 외부 진입, 메타데이터 없음):**
 ```typescript
 window.history.go(1);  // 항상 1칸 forward
 ```
 
-**Internal navigation:**
+**Internal navigation (새로고침 후 일반 뒤로가기 포함):**
 ```typescript
 const delta = nextIndex - currentIndex;  // e.g., -1, -2, -3
 window.history.go(-delta);  // delta만큼 복원
 ```
 
 왜 다른 방식인가?
-- Token mismatch: 항상 1칸 뒤로 온 상황
-- Internal: 히스토리 드롭다운으로 여러 칸 점프 가능
+- Token mismatch: 진짜 세션 경계 — 항상 정확히 1칸 뒤로 온 상황
+- Internal: 히스토리 드롭다운으로 여러 칸 점프 가능; 새로고침 후에는 새로고침된 entry가 원래 세션에 복귀하므로 index 기반 계산이 여기서도 적용됨
 
 ---
 
@@ -334,40 +334,25 @@ if (delta < 0) {
 }
 ```
 
+세션 토큰이 이제 새로고침 후 모듈 평가 시점에 복구되기 때문에 (문제 3 참조), 새로고침된 entry는 원래 세션으로 복귀하고, 이 동일한 index 기반 delta 계산이 새로고침 후에도 앞으로가기와 뒤로가기를 올바르게 구분합니다.
+
 ---
 
-## 문제 3: 새로고침 후 새 세션 경계가 생김
+## 문제 3: 새로고침과 세션 토큰 복구
 
-### 새로고침 후 실제로 벌어지는 일
+### 새로고침 후 토큰을 복구하는 방법
 
-핵심은 "이전 토큰 복원"이 아닙니다. 그건 구조적으로 불가능합니다.
+새로고침 후에는 라이브러리가 모듈 평가 시점 — 번들 실행 중, Next.js 라우터 하이드레이션이 `history.state`를 덮어쓰기 전 — 에 `history.state`를 읽어 이전 세션 토큰을 복구합니다. (브라우저는 `load` 이벤트 직전까지 현재 entry의 `history.state`를 새로고침에 걸쳐 보존합니다. Next.js는 하이드레이션 중 — Provider가 마운트되는 시점 — 에야 비로소 덮어씁니다. 따라서 Provider 마운트 시점에 읽으면 너무 늦지만, 모듈 평가 시점에 읽으면 이전 토큰을 볼 수 있습니다.) 새로고침된 entry가 원래 세션으로 복귀하기 때문에, 새로고침 후 navigation도 index로 추적됩니다: 앞으로가기는 앞으로가기(delta > 0, 허용), 뒤로가기는 뒤로가기(delta < 0, 가드됨)로 올바르게 감지됩니다.
 
-페이지 새로고침 후에는 Next.js Pages Router가 우리 Provider가 마운트되기 전에
-`history.state`를 덮어씁니다. 그래서 현재 entry에 있던 이전 세션 토큰에 다시
-접근할 수 없습니다.
+이는 `history-augmentation.ts`에서 구현됩니다: `__next_session_token`과 `__next_navigation_stack_index`가 모듈 평가 시점에 `history.state`에서 읽히고, `initializeHistoryStateSyncOnce()`는 값이 캡처된 경우 `{token, index}`를 복원하고, 그렇지 않으면 진짜 새 세션을 위한 새 토큰을 생성합니다.
 
-JavaScript state가 사라지는 경우:
+### 새로고침 후 뒤로가기를 위한 rAF + setTimeout 폴백
 
-**1. 첫 방문:**
-- 앱 내 이전 history 없음
-- index 정보 없음
+새로고침 후에는 Next.js가 라이브러리의 synthetic `history.go()` 복원에 대해 `beforePopState`를 호출하지 않으므로, 정상적인 `delta === 0` 후속 popstate가 도착하지 않습니다. 따라서 internal-back 경로는 `requestAnimationFrame` + `setTimeout` 폴백도 예약해서 핸들러가 반드시 실행되도록 하며, 정확히 한 번만 실행되도록 플래그로 보호됩니다.
 
-**2. 새로고침:**
-- JavaScript 메모리 초기화
-- Next.js가 현재 `history.state`를 교체
-- 현재 entry의 이전 세션 토큰 복원 불가
+### 해결책: Token 기반 세션 경계 식별 (진짜 경계에만 적용)
 
-### 해결책: Token 기반 세션 경계 식별
-
-Session마다 고유 token 생성:
-
-```typescript
-export function newToken() {
-  return Math.random().toString(36).substring(2);
-}
-```
-
-index와 함께 state에 주입:
+Token 주입은 여전히 index와 함께 이루어집니다:
 
 ```typescript
 const modifiedState = {
@@ -377,42 +362,41 @@ const modifiedState = {
 };
 ```
 
-popstate에서 다음 entry가 다른 세션인지 검사:
+popstate에서 token-mismatch 검사는 이제 진짜 세션 경계 — 메타데이터가 없거나 다른 세션의 토큰을 가진 entry — 만 처리합니다:
 
 ```typescript
 const token = nextState.__next_session_token;
 
 const isTokenMismatch =
-  !token ||  // 세션 메타데이터 없음
-  token !== renderedStateRef.current.token;  // mismatch (새로고침 후 흔함)
+  !token ||  // 세션 메타데이터 없음 (첫 방문, 라이브러리 도입 전 entry)
+  token !== renderedStateRef.current.token;  // 진짜 다른 세션
 ```
+
+token-mismatch 경로는 여전히 존재하지만, 더 이상 일반적인 새로고침 후 경로가 아닙니다. 이제는 진짜 세션 경계 — 메타데이터가 없거나 다른 세션의 토큰을 가진 entry — 만 처리합니다.
 
 ### 시나리오 예시
 
-**새로고침:**
+**새로고침 후 (토큰 복구됨 — 동일 세션):**
 ```
-Before: currentToken = "abc123", history.state.token = "abc123" ✓
-After:  currentToken = "xyz789" (new), history.state.token = "abc123" (old)
-→ Token mismatch!
+모듈 평가 시 읽음: history.state.__next_session_token = "abc123"
+                   history.state.__next_navigation_stack_index = 2
+initializeHistoryStateSyncOnce()가 token = "abc123", index = 2 복원
+→ 새로고침된 entry가 세션 "abc123"으로 복귀
+→ navigation을 index로 추적 (앞으로가기/뒤로가기 올바르게 감지)
 ```
 
-**정상 navigation:**
+**첫 방문 또는 진짜 새 세션 (메타데이터 없음):**
+```
+모듈 평가 시 읽음: history.state에 __next_session_token 없음
+initializeHistoryStateSyncOnce()가 새 token = "xyz789" 생성
+→ 토큰 없는 이전 entry → isTokenMismatch = true → history.go(1)
+```
+
+**정상 internal navigation:**
 ```
 currentToken = "abc123", nextState.token = "abc123"
-→ Token 일치 ✓
+→ Token 일치 ✓ 정상 index 기반 처리
 ```
-
-### 왜 이전 토큰을 복원할 수 없는가
-
-새로고침 시 순서는 다음과 같습니다:
-
-1. 브라우저가 기존 `history.state`를 복원
-2. Next.js Pages Router가 초기화되며 `replaceState(...)` 호출
-3. 그 다음에 우리 Provider가 마운트되어 Next.js가 덮어쓴 state만 보게 됨
-
-즉, 새로고침 후에는 이전 세션 토큰을 복구할 수 없습니다. 이 라이브러리는
-이전 토큰을 복원하지 않고, 새 세션용 토큰을 새로 만들고 이전 history entry를
-다른 세션으로 간주합니다.
 
 ### 중요한 범위 제한: 외부 도메인으로 나갔다 돌아오는 동작은 인터셉트 대상이 아님
 
@@ -428,7 +412,7 @@ currentToken = "abc123", nextState.token = "abc123"
 |------|------|--------|
 | **URL 복원** | 브라우저가 JS 전에 URL 변경 | `history.go()`로 복원 |
 | **방향 감지** | popstate가 양방향 모두 발생 | pushState patch로 index 주입 |
-| **세션 경계 감지** | 새로고침 후 이전 세션 토큰 복원 불가 | 새 토큰 생성 + mismatch 감지 |
+| **세션 경계 감지** | 라이브러리 도입 전 entry나 다른 세션의 entry는 메타데이터가 없거나 토큰이 다름 | 모듈 평가 시점에 세션 토큰 복구 (Next.js 하이드레이션이 `history.state`를 덮어쓰기 전); token-mismatch 경로는 진짜 경계만 처리 |
 
 Next.js는 `beforePopState`로 navigation intercept 방법은 제공하지만, 어려운 문제들은 개발자에게 맡깁니다. 이 라이브러리가 그 문제들을 해결합니다.
 

@@ -113,4 +113,45 @@ test.describe("Navigation Guard - After Refresh (Token Mismatch)", () => {
     );
     await expect(page).toHaveURL("/basic");
   });
+
+  test("forward navigation after refresh should be allowed (not misdetected as back)", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await page.getByRole("link", { name: "Basic Handler" }).click();
+    await expect(page.getByTestId("page-indicator")).toHaveText(
+      "Current Page: basic"
+    );
+
+    // Go back to home (confirm), leaving /basic as the forward entry.
+    await page.goBack();
+    await expect(page.getByTestId("confirm-dialog-confirm")).toBeVisible({
+      timeout: 10000,
+    });
+    await page.getByTestId("confirm-dialog-confirm").click();
+    await expect(page).toHaveURL("/", { timeout: 10000 });
+
+    // Refresh on home, then go forward to /basic.
+    await page.reload();
+    await page.waitForTimeout(500);
+
+    await page.goForward();
+
+    // Forward must land on /basic without the guard dialog firing.
+    await expect(page).toHaveURL("/basic", { timeout: 10000 });
+    await expect(page.getByTestId("page-indicator")).toHaveText(
+      "Current Page: basic"
+    );
+    await expect(page.getByTestId("confirm-dialog-confirm")).not.toBeVisible();
+
+    // And a subsequent back must still correctly trigger the guard.
+    await page.goBack();
+    await expect(page.getByTestId("confirm-dialog-confirm")).toBeVisible({
+      timeout: 10000,
+    });
+    await page.getByTestId("confirm-dialog-cancel").click();
+    await expect(page.getByTestId("page-indicator")).toHaveText(
+      "Current Page: basic"
+    );
+  });
 });

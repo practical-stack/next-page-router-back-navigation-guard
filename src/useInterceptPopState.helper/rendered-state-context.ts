@@ -44,8 +44,8 @@ export function createRenderedStateContext() {
 /**
  * Computes the next rendered state from navigation parameters.
  *
- * Used when handling a Token Mismatch (back navigation after refresh, or an
- * older history entry that lacks our metadata).
+ * Used when handling a Token Mismatch (an older/cross-session history entry
+ * that lacks matching metadata).
  *
  * If the next entry already carries a session token, switch over to that
  * token and index (i.e. transition into the previous session's entry).

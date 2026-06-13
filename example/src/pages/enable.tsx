@@ -60,6 +60,8 @@ export default function EnableTest() {
 
       <div style={{ marginTop: 20 }}>
         <Link href="/">Back to Home</Link>
+        {" | "}
+        <Link href="/basic" data-testid="go-to-basic">Go to Basic Handler</Link>
       </div>
 
       <div style={{ marginTop: 20 }}>

@@ -21,11 +21,35 @@
  *   Signature: replaceState(state, unused, url?)
  *   Same signature as pushState, replaces current history entry instead of adding new one.
  *
- * @see docs/HISTORY_API_HACKS.md for detailed explanation
+ * @see docs/01-why-this-library.md for detailed explanation
  */
 
 import { RenderedState } from "./types";
 import { DEBUG } from "../@shared/debug";
+
+// Capture the previous session's token + index at MODULE-EVALUATION time.
+//
+// The browser preserves the current entry's history.state across a reload until
+// roughly the `load` event; Next.js Pages Router only overwrites it slightly later,
+// during router hydration — which is also when this library's provider mounts. A read
+// at provider-mount time therefore always sees Next's freshly-rewritten (token-less)
+// state and cannot recover the previous token. Module evaluation runs earlier, during
+// bundle execution before hydration, so the previous token is still readable here.
+//
+// Recovering it lets the refreshed entry rejoin its original session, so back/forward
+// stay distinguishable by index after a refresh instead of every popstate looking like
+// a session-boundary mismatch (which forced forward navigation to be misread as back).
+const _capturedSessionStateAtModuleLoad: RenderedState | null =
+  typeof window !== "undefined" &&
+  window.history &&
+  window.history.state &&
+  window.history.state.__next_session_token
+    ? {
+        sessionToken: window.history.state.__next_session_token,
+        historyIndex:
+          Number(window.history.state.__next_navigation_stack_index) || 0,
+      }
+    : null;
 
 // Module-level singleton state
 let _isHistoryStateSyncInitialized = false;
@@ -99,15 +123,22 @@ export function initializeHistoryStateSyncOnce(): {
     };
   }
 
-  // Always start with a fresh session.
-  // Next.js Pages Router overwrites history.state during its own initialization
-  // (before this provider mounts), so the previous session's token and index on
-  // the current history entry are not readable here. We do not attempt to
-  // restore them and instead generate a brand-new session token.
-  setRenderedState({
-    historyIndex: 0,
-    sessionToken: generateSessionToken(),
-  });
+  // Restore the previous session if we captured one at module-eval time (before
+  // Next wiped history.state); otherwise start a fresh session. Restoring makes the
+  // refreshed entry rejoin its original session so back/forward after a refresh are
+  // told apart by index, fixing the direction-ambiguity limitation.
+  if (_capturedSessionStateAtModuleLoad) {
+    if (DEBUG)
+      console.log(
+        `initializeHistoryStateSyncOnce: restoring session token=${_capturedSessionStateAtModuleLoad.sessionToken}, index=${_capturedSessionStateAtModuleLoad.historyIndex}`
+      );
+    setRenderedState(_capturedSessionStateAtModuleLoad);
+  } else {
+    setRenderedState({
+      historyIndex: 0,
+      sessionToken: generateSessionToken(),
+    });
+  }
 
   if (DEBUG) {
     const currentRenderedState = getRenderedState();
@@ -149,7 +180,28 @@ export function initializeHistoryStateSyncOnce(): {
     }
   };
 
-  // Sync initial state to history if not already present
+  // Bootstrap metadata onto the current history entry.
+  // The patched pushState/replaceState only inject metadata into entries created
+  // after patching, so the entry the user is already sitting on has none — we seed
+  // it with the current rendered state, otherwise a later back navigation to it
+  // would read empty metadata (missing index forces 0, missing token forces a
+  // session mismatch).
+  //
+  // What we write is the rendered state set just above. After a refresh that is the
+  // RESTORED session (token + index captured at module-eval), so this step re-stamps
+  // the current entry and is what makes it rejoin its original session — without it,
+  // the restored token would live only in memory and the entry on disk would still be
+  // token-less. On a genuine first visit there is nothing to restore, so it is a fresh
+  // { index: 0, token }.
+  //
+  // In Next.js Pages Router the condition is effectively always true: Next overwrites
+  // history.state during init (before our provider mounts), wiping the entry's
+  // metadata — so we always re-inject. The check is kept for non-Next environments (or
+  // if Next's behavior changes) where the entry already carries valid metadata; then
+  // we leave it untouched.
+  //
+  // `== null` (not `===`) matches both null and undefined, since a missing key reads
+  // back as undefined.
   if (
     !window.history.state ||
     window.history.state.__next_navigation_stack_index == null ||
