@@ -57,13 +57,7 @@ jobs:
         working-directory: example
 
       - name: Run example app
-        # Redirect stdio to a file so the backgrounded server does NOT keep the
-        # runner's log pipe open. With a bare `pnpm start &`, the surviving
-        # `next start` process inherits this step's stdout/stderr (the runner's
-        # log pipe) and holds it open; on Node 24 the next step ("Install
-        # Playwright Browsers") then hangs forever waiting for pipe EOF even
-        # after its own work finishes. Detaching the FDs lets each step finalize.
-        run: pnpm start > /tmp/example-server.log 2>&1 &
+        run: pnpm start &
         working-directory: example
 
       - name: Install Playwright Browsers
