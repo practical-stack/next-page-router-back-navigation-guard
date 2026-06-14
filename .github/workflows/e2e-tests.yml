@@ -30,7 +30,7 @@ jobs:
             "15.5", # latest 15.x
             "16.2", # latest 16.x
           ]
-        node-version: [20]
+        node-version: [24]
     steps:
       - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
 
