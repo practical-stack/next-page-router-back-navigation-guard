@@ -1,33 +1,16 @@
 /**
  * Handler Execution
  *
- * Executes registered navigation handlers in priority order.
- * Handlers can be async and return boolean to allow/block navigation.
+ * Executes registered navigation handlers in priority order. Handlers may be async and
+ * return a boolean to allow/block navigation.
  *
- * ## once Option Behavior
- *
- * When a handler has `once: true`, it is removed from the handlerMap BEFORE execution.
- * This ensures the handler runs exactly once, regardless of its return value.
- *
- * Key design decision: "once" means "execute once", not "allow navigation once".
- *
- * Example scenario with once: true handler:
- * 1. First back press → handler executes, shows dialog, returns false (blocks)
- *    → handler is already removed from map
- * 2. Second back press → preRegisteredHandler closes dialog
- * 3. Third back press → no handler exists, navigation proceeds
- *
- * If handler was only removed on `return true`, the scenario would be:
- * 1. First back → handler blocks (returns false) → stays registered
- * 2. Second back → preRegisteredHandler closes dialog
- * 3. Third back → handler runs AGAIN (unexpected!)
- *
- * The current implementation prevents this confusion by removing the handler
- * immediately upon execution, before awaiting its result.
+ * `once: true` means "execute once", not "allow navigation once": the handler is removed
+ * BEFORE execution, so it runs exactly once regardless of its return value. (Removing it
+ * only on `return true` would let a blocking handler re-run on a later back press.)
  */
 
 import { HandlerDef } from "../@shared/types";
-import { DEBUG } from "../@shared/debug";
+import { debug } from "../@shared/debug";
 import { sortHandlersByPriority } from "./sort-handlers";
 
 export interface HandlerContext {
@@ -56,7 +39,7 @@ export async function runHandlerChainAndGetShouldAllowNavigation(
   if (preRegisteredHandler) {
     const shouldContinue = preRegisteredHandler();
     if (!shouldContinue) {
-      if (DEBUG) console.log(`[Handler] Cancelled by preRegisteredHandler`);
+      debug(`[Handler] Cancelled by preRegisteredHandler`);
       return false;
     }
   }
@@ -77,7 +60,7 @@ export async function runHandlerChainAndGetShouldAllowNavigation(
     const shouldContinue = await firstHandler.callback({ to: destinationPath });
 
     if (!shouldContinue) {
-      if (DEBUG) console.log(`[Handler] Cancelled by handler`);
+      debug(`[Handler] Cancelled by handler`);
       return false;
     }
   }

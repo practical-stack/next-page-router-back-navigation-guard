@@ -143,9 +143,6 @@ isNavigationConfirmed 플래그 확인
     handler 콜백 전 URL 복원 필요
           │
           ▼
-    isRestoringUrl = true
-          │
-          ▼
     history.go(1) 호출 → URL 복원 (앞으로 이동)
           │
           ▼
@@ -405,22 +402,19 @@ Event ignored (infinite loop prevention)
 
 ### 시나리오 8: Token Mismatch 복원 Popstate
 
-Token mismatch 차단 시 `history.go(1)` 호출로 또 다른 popstate가 발생합니다. `isRestoringUrl` 플래그로 무시합니다.
+Token mismatch 차단 시 `history.go(1)` 호출로 또 다른 popstate가 발생합니다. 이 복원은 token이 일치하는 항목으로 되돌아오므로, echo popstate는 내부 네비게이션 경로로 라우팅되어 `delta === 0` 분기(시나리오 7과 동일한 메커니즘)에서 무시됩니다 — 별도 플래그가 필요 없습니다.
 
 ```
 Token Mismatch detected → history.go(1) called
     │
     ▼
-isRestoringUrl = true
+popstate re-fired (by go(1)) → token 일치 항목으로 착지
     │
     ▼
-popstate re-fired (by go(1))
+내부 네비게이션으로 라우팅 → delta === 0
     │
     ▼
-Check isRestoringUrl
-    │
-    ▼
-If true → Clear flag and ignore event
+이벤트 무시 (시나리오 7과 동일)
 ```
 
 ### 시나리오 9: 새로고침 후 Once 핸들러 (빈 HandlerMap + preRegisteredHandler)
@@ -468,67 +462,44 @@ URL 복원: history.go(1) ← 핵심!
 ## 전체 흐름도
 
 ```
-+------------------------------------------------------------------+
-|                    Back/Forward button clicked                    |
-+------------------------------------------------------------------+
-                                   │
-                                   ▼
-+------------------------------------------------------------------+
-|                      popstate event fired                         |
-+------------------------------------------------------------------+
-                                   │
-                                   ▼
-                    +--------------------------+
-                    │ isNavigationConfirmed?   │  ← 먼저 확인
-                    +--------------------------+
-                         │              │
-                        YES            NO
-                         │              │
-                         ▼              ▼
-                   +----------+  +--------------------------+
-                   │ 플래그   │  │ Token Mismatch?          │
-                   │ 초기화,  │  │ (token 없음/불일치)      │
-                   │ 허용     │  +--------------------------+
-                   +----------+       │              │
-                                    YES            NO
-                                     │              │
-                                     ▼              ▼
-                   +-------------------------+  +--------------+
-                   │ isRestoringUrl          │  │ delta === 0? │
-                   │ flag?                   │  +--------------+
-                   +-------------------------+       │      │
-                          │          │             YES     NO
-                         YES        NO              │       │
-                          │          │              ▼       ▼
-                          ▼          ▼       +---------+  +--------------+
-                   +----------+  +--------+  │ Ignore  │  │ delta > 0?   │
-                   │ 플래그   │  │ handler│  +---------+  │ (forward)    │
-                   │ 초기화,  │  │ 있음?  │               +--------------+
-                   │ 무시     │  +--------+                    │      │
-                   +----------+    │    │                    YES     NO
-                                 YES   NO                     │       │
-                                  │     │                     ▼       ▼
-                          +----------+ +-----+         +---------+  +----------+
-                          │ go(1)    │ │허용 │         │ 허용    │  │ handler  │
-                          │ +플래그  │ +-----+         +---------+  │ 있음?    │
-                          +----------+                              +----------+
-                                │                                      │    │
-                                ▼                                    YES   NO
-                          +--------------+                             │     │
-                          │ setTimeout   │                             ▼     ▼
-                          │ handler 호출 │                      +----------+ +-----+
-                          +--------------+                      │ handler  │ │허용 │
-                                │                               │ callback │ +-----+
-                     +----------+----------+                    +----------+
-                     │                     │                         │
-                     ▼                     ▼              +----------+----------+
-               +----------+         +----------+          │                     │
-               │ 허용     │         │ 차단     │          ▼                     ▼
-               │ 플래그   │         │ 유지     │    +----------+         +----------+
-               │ back()   │         +----------+    │ 허용     │         │ 차단     │
-               +----------+                         │ 플래그   │         │ go(-delta)│
-                                                    │ go(delta)│         │ 복원     │
-                                                    +----------+         +----------+
+Back/Forward 버튼 클릭
+    │
+    ▼
+popstate 이벤트 발생
+    │
+    ▼
+isNavigationConfirmed?  (핸들러가 이미 이 네비게이션을 승인함)
+    ├── YES → isNavigationConfirmed 초기화, 네비게이션 허용
+    └── NO
+         │
+         ▼
+        Token Mismatch?  (token 없음 / 다른 세션)
+         │
+         ├── YES → handleSessionBoundary
+         │          ├── 핸들러 등록됨?
+         │          │    ├── YES → history.go(1)로 URL 복원, (브라우저가 안정된 뒤)
+         │          │    │         핸들러 실행:
+         │          │    │           ├── 허용 → isNavigationConfirmed 설정, history.back()
+         │          │    │           └── 차단 → 유지
+         │          │    └── NO  → preRegisteredHandler 실행
+         │          │              ├── 차단 → history.go(1)로 복원
+         │          │              └── 허용 → 착지한 항목 채택, 허용
+         │          └── (go(1) 복원의 echo는 token이 일치하는 항목으로 착지하므로,
+         │              아래 delta === 0 분기에서 무시됨 — 별도 플래그 없음)
+         │
+         └── NO → handleInternalNavigation (index delta로 분류)
+                   ├── delta === 0
+                   │     ├── 대기 중 복원 있음? → 미뤄둔 핸들러 실행
+                   │     └── 그 외 → 무시 (우리가 호출한 go() 복원의 echo)
+                   ├── delta > 0  → forward 네비게이션 → 허용
+                   └── delta < 0  → back 네비게이션
+                         ├── 핸들러 등록됨?
+                         │    ├── YES → history.go(-delta)로 URL 복원, 핸들러 실행
+                         │    │         (허용 → isNavigationConfirmed 설정, go(delta);
+                         │    │          차단 → 유지)
+                         │    └── NO  → preRegisteredHandler 실행
+                         │              ├── 차단 → history.go(-delta)로 복원
+                         │              └── 허용 → 착지한 항목 채택, 허용
 ```
 
 ---

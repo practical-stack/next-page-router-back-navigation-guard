@@ -51,7 +51,7 @@
 | 파일 | 역할 |
 |------|------|
 | `history-augmentation.ts` | History API 패치 (index/token 주입) |
-| `interception-state.ts` | 인터셉션 플래그 (`isRestoringUrl`, `isNavigationConfirmed` 등) |
+| `interception-state.ts` | 공용 인터셉션 플래그 (`isNavigationConfirmed`) |
 | `rendered-state-context.ts` | 현재 historyIndex와 sessionToken 추적 |
 | `parse-history-state.ts` | history.state에서 token/index 추출 |
 | `handler-execution.ts` | 핸들러 체인 실행 및 네비게이션 결정 |

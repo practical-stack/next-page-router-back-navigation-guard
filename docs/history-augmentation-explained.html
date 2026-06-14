@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>history-augmentation.ts — 몽키패칭 & initialize 완전 해설</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel2: #1c2330;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #9da7b3;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --orange: #d29922;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --pink: #f778ba;
+    --code-bg: #0b0f14;
+    --kw: #ff7b72;
+    --str: #a5d6ff;
+    --com: #8b949e;
+    --fn: #d2a8ff;
+    --num: #79c0ff;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    line-height: 1.7;
+    font-size: 15px;
+  }
+  .layout { display: flex; max-width: 1500px; margin: 0 auto; }
+  nav {
+    position: sticky; top: 0; align-self: flex-start;
+    width: 270px; height: 100vh; overflow-y: auto;
+    padding: 24px 16px; border-right: 1px solid var(--border);
+    background: var(--panel);
+    flex-shrink: 0;
+  }
+  nav h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 18px 0 8px; }
+  nav a { display: block; color: var(--text); text-decoration: none; padding: 4px 10px; border-radius: 6px; font-size: 13.5px; }
+  nav a:hover { background: var(--panel2); color: var(--accent); }
+  nav .top { font-weight: 700; font-size: 16px; color: var(--accent); margin-bottom: 4px; }
+  nav .sub { padding-left: 20px; font-size: 12.5px; color: var(--muted); }
+  main { flex: 1; padding: 40px 48px; min-width: 0; max-width: 1100px; }
+  h1 { font-size: 30px; border-bottom: 2px solid var(--border); padding-bottom: 14px; }
+  h2.sec { font-size: 23px; margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--accent); }
+  h3 { font-size: 18px; margin-top: 32px; color: var(--purple); }
+  h4 { font-size: 15px; margin-top: 22px; color: var(--pink); }
+  p { color: var(--text); }
+  code.inline { background: var(--panel2); padding: 2px 6px; border-radius: 5px; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; color: var(--orange); }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12.8px; line-height: 1.6;
+  }
+  pre .kw { color: var(--kw); }
+  pre .str { color: var(--str); }
+  pre .com { color: var(--com); font-style: italic; }
+  pre .fn { color: var(--fn); }
+  pre .num { color: var(--num); }
+  pre .ln { color: #4d5560; user-select: none; }
+  pre .hl { background: rgba(210,153,34,.12); display: inline-block; width: 100%; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin: 20px 0; }
+  .note { border-left: 4px solid var(--accent); background: rgba(88,166,255,.08); padding: 12px 18px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .warn { border-left: 4px solid var(--orange); background: rgba(210,153,34,.08); padding: 12px 18px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .danger { border-left: 4px solid var(--red); background: rgba(248,81,73,.08); padding: 12px 18px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .good { border-left: 4px solid var(--green); background: rgba(63,185,80,.08); padding: 12px 18px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+  .purpose { display: flex; gap: 10px; margin: 12px 0; }
+  .purpose .tag { flex-shrink: 0; font-weight: 700; padding: 2px 10px; border-radius: 6px; height: fit-content; font-size: 12px; }
+  .tag.목적 { background: rgba(63,185,80,.15); color: var(--green); border: 1px solid var(--green); }
+  .tag.구현 { background: rgba(188,140,255,.15); color: var(--purple); border: 1px solid var(--purple); }
+  .tag.이유 { background: rgba(210,153,34,.15); color: var(--orange); border: 1px solid var(--orange); }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 13.5px; }
+  th, td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--panel2); color: var(--accent); }
+  td code { color: var(--orange); font-family: "SF Mono", Menlo, monospace; font-size: 12.5px; }
+  .flow { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 20px 0; }
+  .step { display: flex; align-items: flex-start; gap: 14px; margin: 10px 0; }
+  .step .num { flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: #000; font-weight: 700; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+  .step .body { padding-top: 2px; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 20px; font-size: 11.5px; font-weight: 600; background: var(--panel2); border: 1px solid var(--border); color: var(--muted); }
+  .file-pill { font-family: "SF Mono", monospace; font-size: 12px; color: var(--accent); background: var(--panel2); padding: 2px 8px; border-radius: 5px; }
+  .ascii { font-family: "SF Mono", Menlo, monospace; font-size: 12.5px; white-space: pre; color: var(--muted); background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px; overflow-x: auto; }
+  summary { cursor: pointer; font-weight: 600; color: var(--accent); padding: 8px 0; }
+  details { border: 1px solid var(--border); border-radius: 10px; padding: 4px 16px; margin: 14px 0; background: var(--panel); }
+  .kvs { color: var(--orange); font-family: "SF Mono", Menlo, monospace; }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="top">history-augmentation.ts</div>
+  <div style="color:var(--muted);font-size:12px;margin-bottom:8px;">몽키패칭 & initialize 해설</div>
+  <h2>문제</h2>
+  <a href="#why">1. 왜 몽키패칭인가</a>
+  <a href="#meta">2. 주입하는 2개의 키</a>
+  <h2>모듈 골격</h2>
+  <a href="#state" class="sub">싱글톤 상태 4개</a>
+  <a href="#captured" class="sub">모듈-평가 토큰 캡처</a>
+  <a href="#token" class="sub">generateSessionToken</a>
+  <h2>패치 만드는 부품</h2>
+  <a href="#helpers">3. 작은 헬퍼 3개</a>
+  <a href="#factory">4. createPatchedHistoryMethod</a>
+  <h2>initialize 분해</h2>
+  <a href="#init">5. initializeHistoryStateSyncOnce</a>
+  <a href="#s1" class="sub">① 싱글톤 가드</a>
+  <a href="#s2" class="sub">② 원본 백업</a>
+  <a href="#s3" class="sub">③ 세션 복원 / fresh</a>
+  <a href="#s4" class="sub">④ sync 클로저 정의</a>
+  <a href="#s5" class="sub">⑤ 현재 진입점 시드</a>
+  <a href="#s6" class="sub">⑥ push/replace 패칭</a>
+  <h2>소비</h2>
+  <a href="#consume">7. 결과는 언제 쓰이나</a>
+  <a href="#flow">8. 전체 흐름도</a>
+  <a href="#summary">9. 한눈에 요약</a>
+</nav>
+
+<main>
+<h1>history-augmentation.ts<br><span style="font-size:18px;color:var(--muted);font-weight:400;">몽키패칭과 initialize 로직 완전 해설</span></h1>
+<p style="color:var(--muted)">
+이 파일은 라이브러리의 <strong>가장 밑바닥 기반 계층</strong>입니다.
+브라우저의 <code class="inline">history.pushState</code> / <code class="inline">history.replaceState</code>를
+<strong>몽키패칭(monkey-patching)</strong>해서, History API가 원래 제공하지 않는
+<em>"내가 history 스택의 몇 번째에 있는가"</em>와 <em>"지금 세션이 어느 세션인가"</em>를
+추적합니다. 이 문서는 모듈의 구성 요소(상수·헬퍼·팩토리)를 먼저 본 뒤,
+<code class="inline">initializeHistoryStateSyncOnce()</code>가 그것들을 어떻게 엮어
+<strong>무엇을, 왜, 그리고 그 결과가 어디서 소비되는지</strong>를 단계별로 풀어 설명합니다.
+</p>
+
+<!-- ============================================ -->
+<h2 class="sec" id="why">1. 왜 몽키패칭이 필요한가</h2>
+
+<p>
+이 라이브러리의 목적은 <strong>뒤로 가기(back)만 가로채는 것</strong>입니다.
+그런데 브라우저가 주는 <code class="inline">popstate</code> 이벤트는 결정적인 정보가 빠져 있습니다.
+</p>
+
+<div class="danger">
+<strong>핵심 난점 — popstate는 "뒤로"인지 "앞으로"인지 알려주지 않는다</strong><br>
+사용자가 뒤로 가기를 눌러도, 앞으로 가기를 눌러도 둘 다 똑같이 <code class="inline">popstate</code>가 발생합니다.
+이벤트 객체에는 방향(delta)이 없습니다. 우리는 <strong>뒤로 가기만</strong> 막고 싶은데, 방향을 모르면 막을 수가 없습니다.
+</div>
+
+<h3>그럼 위치 인덱스를 어디서 구하나?</h3>
+<table>
+<tr><th>방법</th><th>인덱스 제공?</th><th>문제</th></tr>
+<tr><td><code>history.length</code></td><td>❌</td><td>스택의 <em>총 길이</em>일 뿐, 현재 위치가 아니다</td></tr>
+<tr><td>Navigation API <code>navigation.currentEntry.index</code></td><td>✅</td><td>Safari / Firefox 미지원 → 못 씀</td></tr>
+<tr><td><strong>history.state에 내가 직접 인덱스를 심기</strong></td><td>✅</td><td>모든 브라우저 동작 → <strong>이 라이브러리가 선택한 길</strong></td></tr>
+</table>
+
+<div class="purpose">
+<span class="tag 이유">이유</span>
+<div>표준 API로는 "현재 위치"를 알 방법이 전무합니다. 그래서 <code class="inline">pushState</code>/<code class="inline">replaceState</code>를
+가로채서, 호출될 때마다 <strong>우리가 매긴 위치 번호</strong>를 <code class="inline">history.state</code> 안에
+몰래 기록합니다. 이것이 몽키패칭을 하는 단 하나의 이유입니다. (파일 상단 주석 <code class="inline">history-augmentation.ts:1-14</code>에 동일한 요지가 적혀 있습니다.)</div>
+</div>
+
+<!-- ============================================ -->
+<h2 class="sec" id="meta">2. 주입하는 메타데이터 2개의 키</h2>
+
+<p>패칭된 함수들은 모든 history 진입점(entry)의 <code class="inline">history.state</code>에
+다음 두 개의 키를 추가합니다. 키 이름은 파일 상단의 상수로 정의돼 있습니다.</p>
+
+<pre><span class="ln">19 </span><span class="kw">const</span> SESSION_TOKEN_KEY = <span class="str">"__next_session_token"</span>;
+<span class="ln">20 </span><span class="kw">const</span> STACK_INDEX_KEY = <span class="str">"__next_navigation_stack_index"</span>;</pre>
+
+<table>
+<tr><th>키</th><th>의미</th><th>왜 필요한가</th></tr>
+<tr>
+  <td><code>__next_navigation_stack_index</code></td>
+  <td>이 history 진입점이 스택에서 몇 번째인가 (0부터 증가)</td>
+  <td>popstate 시 <code>delta = 다음 인덱스 − 현재 인덱스</code>를 계산해서<br>음수면 <strong>뒤로</strong>, 양수면 <strong>앞으로</strong>를 판별</td>
+</tr>
+<tr>
+  <td><code>__next_session_token</code></td>
+  <td>이 페이지 로드(세션)의 고유 난수 ID</td>
+  <td>세션 경계(외부/구 진입점)를 감지. 토큰이 다르면<br>인덱스를 신뢰할 수 없는 상황(=Session Boundary). 새로고침은 토큰이 복원되어 경계가 아님</td>
+</tr>
+</table>
+
+<div class="note">
+<strong>한 줄로:</strong> 브라우저의 각 history 진입점에는 <code class="inline">history.state</code> 객체가 딸려 있습니다.
+몽키패칭은 진입점이 만들어질 때마다 그 <code class="inline">history.state</code>에
+<strong>위치 인덱스와 세션 토큰</strong>을 기록해 둡니다.
+나중에 popstate가 오면 도착한 진입점의 <code class="inline">history.state</code>를 읽어 "몇 번에서 몇 번으로 이동했는지"를 계산해 방향을 알아냅니다.
+</div>
+
+<!-- ============================================ -->
+<h2 class="sec" id="state">모듈 골격 — 싱글톤 상태 4개</h2>
+
+<p>파일 최상단에 <strong>모듈-평가 시점에 캡처되는 상수 1개</strong>와 <strong>모듈 레벨 변수 3개</strong>가 있습니다. 이들은 <strong>앱 전체에서 단 하나</strong>만 존재합니다.</p>
+
+<pre><span class="ln">31 </span><span class="com">// 이전 세션 토큰/인덱스를 모듈-평가 때 캡처 (불변 상수)</span>
+<span class="ln">31 </span><span class="kw">const</span> _capturedSessionStateAtModuleLoad: RenderedState | <span class="kw">null</span> = …;
+<span class="ln">   </span>
+<span class="ln">43 </span><span class="com">// Module-level singleton state</span>
+<span class="ln">43 </span><span class="kw">let</span> _isHistoryStateSyncInitialized = <span class="kw">false</span>;                       <span class="com">// 패칭 1회 가드</span>
+<span class="ln">44 </span><span class="kw">let</span> _renderedState: RenderedState = { historyIndex: <span class="num">-1</span>, sessionToken: <span class="str">""</span> };
+<span class="ln">45 </span><span class="kw">let</span> _setRenderedStateAndSyncToHistory = () => {};            <span class="com">// 나중에 진짜 구현으로 교체</span></pre>
+
+<ul>
+<li><code class="inline">_capturedSessionStateAtModuleLoad</code> — <strong>모듈이 평가되는 순간</strong> <code class="inline">history.state</code>에서 읽어낸 <em>이전 세션의</em> <span class="kvs">{ sessionToken, historyIndex }</span> (없으면 <code class="inline">null</code>). 한 번 잡으면 바뀌지 않는 상수. 새로고침이 세션을 끊지 않게 만드는 핵심 — 아래 <a href="#captured" style="color:var(--accent)">전용 절</a>.</li>
+<li><code class="inline">_isHistoryStateSyncInitialized</code> — 패칭을 <strong>딱 한 번만</strong> 하기 위한 잠금장치. 초기값 <code class="inline">false</code>, 끝에서 <code class="inline">true</code>.</li>
+<li><code class="inline">_renderedState</code> — <em>지금 화면에 렌더링된 페이지</em>가 가진 <span class="kvs">{ historyIndex, sessionToken }</span>. 우리가 추적하는 "현재 위치"의 진실(source of truth). 초기값은 의도적으로 무효한 <span class="kvs">{ -1, "" }</span>.</li>
+<li><code class="inline">_setRenderedStateAndSyncToHistory</code> — 초기엔 빈 함수(no-op). initialize 안에서 실제 구현으로 교체되고, 밖으로 반환되어 popstate 핸들러가 사용합니다(④).</li>
+</ul>
+
+<!-- ============================================ -->
+<h2 class="sec" id="captured">모듈-평가 토큰 캡처 — _capturedSessionStateAtModuleLoad</h2>
+
+<p>
+이전 세션의 토큰을 <strong>모듈 평가 시점(module-evaluation time)</strong>에 캡처해 둡니다.
+이것이 새로고침을 "끊긴 세션"이 아니라 "이어지는 세션"으로 다루게 해주는 장치입니다.
+</p>
+
+<pre><span class="ln">31 </span><span class="kw">const</span> _capturedSessionStateAtModuleLoad: RenderedState | <span class="kw">null</span> =
+<span class="ln">32 </span>  <span class="kw">typeof</span> window !== <span class="str">"undefined"</span> &&
+<span class="ln">33 </span>  window.history &&
+<span class="ln">34 </span>  window.history.state &&
+<span class="ln">35 </span>  window.history.state[SESSION_TOKEN_KEY]
+<span class="ln">36 </span>    ? {
+<span class="ln">37 </span>        sessionToken: window.history.state[SESSION_TOKEN_KEY],
+<span class="ln">38 </span>        historyIndex: <span class="fn">Number</span>(window.history.state[STACK_INDEX_KEY]) || <span class="num">0</span>,
+<span class="ln">39 </span>      }
+<span class="ln">40 </span>    : <span class="kw">null</span>;</pre>
+
+<div class="purpose">
+<span class="tag 이유">이유</span>
+<div>브라우저는 새로고침(reload)을 <strong>가로질러</strong> 그 진입점의 <code class="inline">history.state</code>를
+<strong>대략 <code class="inline">load</code> 이벤트 전까지 보존</strong>합니다. Next.js Pages Router는 그보다
+<strong>약간 늦게</strong>(router hydration 시, Provider가 마운트될 때) 그것을 덮어씁니다.
+그런데 <strong>모듈 평가는 hydration보다 먼저</strong> 실행되므로, 그 순간엔 이전 토큰이 아직
+<code class="inline">history.state</code>에 남아 있습니다 → <strong>캡처 가능</strong>합니다.
+(주석 <code class="inline">history-augmentation.ts:22-30</code>에 같은 설명이 있습니다.)</div>
+</div>
+
+<div class="ascii">  시간축 ───────────────────────────────────────────────►
+
+  reload 직후: history.state 에 이전 세션 토큰이 아직 남아 있음
+     │
+     ├─ ① 모듈 평가  ← 여기서 토큰 캡처 (_capturedSessionStateAtModuleLoad)  ✓
+     │
+     ├─ ② Next router hydration / Provider 마운트  ← 여기서 history.state 덮어씀 ✗
+     │     (만약 여기서 읽으면 token-less 한 Next 상태만 보임)
+     ▼
+  ③ initializeHistoryStateSyncOnce() ← 캡처해 둔 토큰을 복원</div>
+
+<div class="good">
+<strong>효과:</strong> 새로고침된 진입점은 <strong>원래 세션에 재합류</strong>하고, back/forward는
+<strong>인덱스(delta) 기반으로 정상 구분</strong>됩니다. 더 이상 새로고침이 모든 popstate를
+세션 경계로 오인하게 만들지 않습니다. (과거의 "forward-after-refresh 오인" 한계는
+이 모듈-평가 복원으로 <strong>해결</strong>되었습니다.)
+</div>
+
+<h3 id="token">generateSessionToken — 새 세션에만 새 토큰</h3>
+<pre><span class="ln">57 </span><span class="kw">export function</span> <span class="fn">generateSessionToken</span>(): <span class="kw">string</span> {
+<span class="ln">58 </span>  <span class="kw">return</span> Math.<span class="fn">random</span>().<span class="fn">toString</span>(<span class="num">36</span>).<span class="fn">substring</span>(<span class="num">2</span>);
+<span class="ln">59 </span>}</pre>
+
+<div class="good">
+<strong>매 로드마다 새 토큰이 아니다 — 복원할 게 없을 때만 새로 만든다.</strong><br>
+이전 세션 토큰은 <code class="inline">_capturedSessionStateAtModuleLoad</code>로 이미 캡처해 둡니다(<a href="#captured" style="color:var(--accent)">위 절</a>).
+그래서 <code class="inline">generateSessionToken()</code>은 <strong>복원할 세션이 없을 때만</strong> 호출됩니다 —
+진짜 첫 방문(③의 else 분기), 또는 토큰이 아직 없는 상태에서의 push/replace(팩토리의 안전망).
+<strong>새로고침은 mismatch가 아니며</strong>, back/forward는 인덱스(delta)로 정상 구분됩니다.
+</div>
+
+<!-- ============================================ -->
+<h2 class="sec" id="helpers">3. 패치를 만드는 작은 헬퍼 3개</h2>
+
+<p>패칭 로직 자체는 <code class="inline">createPatchedHistoryMethod</code> 팩토리(다음 절)가 담당하지만,
+그 전에 알아둘 작은 순수 함수 3개가 있습니다.</p>
+
+<pre><span class="ln">64 </span><span class="com">// 현재 렌더링 상태의 불변 복사본</span>
+<span class="ln">64 </span><span class="kw">export function</span> <span class="fn">getRenderedState</span>(): RenderedState {
+<span class="ln">65 </span>  <span class="kw">return</span> { ..._renderedState };
+<span class="ln">66 </span>}
+<span class="ln">   </span>
+<span class="ln">71 </span><span class="com">// 모듈 상태를 불변 업데이트 (포인터 이동의 유일한 창구)</span>
+<span class="ln">71 </span><span class="kw">function</span> <span class="fn">setRenderedState</span>(renderedState: RenderedState): <span class="kw">void</span> {
+<span class="ln">72 </span>  _renderedState = { ...renderedState };
+<span class="ln">73 </span>}
+<span class="ln">   </span>
+<span class="ln">78 </span><span class="com">// history.state 객체에 우리 추적 메타데이터를 병합</span>
+<span class="ln">78 </span><span class="kw">function</span> <span class="fn">withTrackingMetadata</span>(historyState, { sessionToken, historyIndex }) {
+<span class="ln">82 </span>  <span class="kw">return</span> {
+<span class="ln">83 </span>    ...historyState,                          <span class="com">// 호출자/Next가 넣은 state 보존</span>
+<span class="ln">84 </span>    [SESSION_TOKEN_KEY]: sessionToken,
+<span class="ln">85 </span>    [STACK_INDEX_KEY]: historyIndex,
+<span class="ln">86 </span>  };
+<span class="ln">87 </span>}</pre>
+
+<table>
+<tr><th>헬퍼</th><th>하는 일</th><th>핵심 포인트</th></tr>
+<tr>
+  <td><code>getRenderedState()</code></td>
+  <td>모듈 포인터 <code>_renderedState</code>의 <strong>복사본</strong> 반환</td>
+  <td><code>export</code>되어 <span class="file-pill">rendered-state-context.ts</span>가 그대로 노출 (외부의 읽기 창구)</td>
+</tr>
+<tr>
+  <td><code>setRenderedState()</code></td>
+  <td>모듈 포인터를 <strong>불변 교체</strong></td>
+  <td>"현재 위치"를 옮기는 단 하나의 통로. 팩토리·sync 클로저·복원 분기가 모두 이걸 호출</td>
+</tr>
+<tr>
+  <td><code>withTrackingMetadata()</code></td>
+  <td>임의의 state에 <code>{token, index}</code> 두 키를 <strong>덧씌움</strong></td>
+  <td>스프레드로 원본 보존 → Next가 넣은 <code>{url, as, key, __N}</code> 등이 사라지지 않음</td>
+</tr>
+</table>
+
+<div class="note">
+이 3개가 "상태 진실"의 두 축을 각각 담당합니다 — <code class="inline">setRenderedState</code>는
+<strong>메모리 포인터(<code class="inline">_renderedState</code>)</strong>를, <code class="inline">withTrackingMetadata</code>는
+<strong>디스크 메타데이터(<code class="inline">history.state</code>)</strong>를 다룹니다. 이 구분이 sync ON/OFF 이해의 토대입니다.
+</div>
+
+<!-- ============================================ -->
+<h2 class="sec" id="factory">4. createPatchedHistoryMethod — push/replace를 한 틀로</h2>
+
+<p>
+예전 구현은 <code class="inline">pushState</code>와 <code class="inline">replaceState</code>를 <strong>각각 따로</strong> 인라인으로 패칭했습니다.
+지금은 둘의 차이가 <strong>"인덱스를 +1 하느냐 마느냐" 단 하나</strong>뿐이라는 점에 착안해,
+<code class="inline">advanceIndex</code> 불리언 하나로 갈라지는 <strong>단일 팩토리</strong>로 합쳤습니다.
+</p>
+
+<pre><span class="ln">96 </span><span class="kw">function</span> <span class="fn">createPatchedHistoryMethod</span>(
+<span class="ln">97 </span>  original: History[<span class="str">"pushState"</span>],
+<span class="ln">98 </span>  advanceIndex: <span class="kw">boolean</span>          <span class="com">// push → true, replace → false</span>
+<span class="ln">99 </span>): History[<span class="str">"pushState"</span>] {
+<span class="ln">100</span>  <span class="kw">return function</span> (<span class="kw">this</span>: History, historyState, unused, url) {
+<span class="ln">101</span>    <span class="kw">const</span> current = <span class="fn">getRenderedState</span>();
+<span class="ln">102</span>    <span class="kw">const</span> next: RenderedState = current.sessionToken
+<span class="ln">103</span>      ? {                                                          <span class="com">// 정상: 세션 유지</span>
+<span class="ln">104</span>          sessionToken: current.sessionToken,
+<span class="ln">105</span>          historyIndex: current.historyIndex + (advanceIndex ? <span class="num">1</span> : <span class="num">0</span>),
+<span class="ln">106</span>        }
+<span class="ln">107</span>      : { sessionToken: <span class="fn">generateSessionToken</span>(), historyIndex: <span class="num">0</span> }; <span class="com">// 안전망</span>
+<span class="ln">108</span>
+<span class="ln">109</span>    <span class="fn">setRenderedState</span>(next);                                       <span class="com">// ① 포인터 갱신</span>
+<span class="ln">110</span>    debug(…);
+<span class="ln">113</span>    original.<span class="fn">call</span>(<span class="kw">this</span>, <span class="fn">withTrackingMetadata</span>(historyState, next), unused, url); <span class="com">// ② 원본 위임</span>
+<span class="ln">114</span>  };
+<span class="ln">115</span>}</pre>
+
+<div class="purpose">
+<span class="tag 구현">구현</span>
+<div>호출되면 — ① 현재 상태를 읽어 <code class="inline">next</code>를 계산(토큰 유지, 인덱스는 <code class="inline">advanceIndex</code>면 +1) →
+② <code class="inline">setRenderedState</code>로 포인터를 옮기고 → ③ <code class="inline">withTrackingMetadata</code>로 메타데이터를
+끼운 state를 <strong>원본</strong>에 위임합니다. <code class="inline">this</code>를 그대로 넘겨 호출 문맥을 유지합니다.</div>
+</div>
+
+<table>
+<tr><th>인자</th><th>매핑</th><th>의미</th></tr>
+<tr><td><code>advanceIndex: true</code></td><td>→ <code>pushState</code>로 사용</td><td>새 진입점이 생기므로 <strong>인덱스 +1</strong></td></tr>
+<tr><td><code>advanceIndex: false</code></td><td>→ <code>replaceState</code>로 사용</td><td>같은 칸 덮어쓰기이므로 <strong>인덱스 유지</strong></td></tr>
+</table>
+
+<div class="warn">
+<strong>왜 안전망(<code class="inline">: { generateSessionToken(), 0 }</code>)이 있나?</strong>
+정상 흐름에선 initialize가 먼저 토큰을 채우므로 <code class="inline">current.sessionToken</code>은 항상 truthy입니다.
+하지만 어떤 이유로든 토큰이 빈 상태에서 push/replace가 먼저 불리면, 추적이 깨지지 않게
+<strong>그 자리에서 새 세션을 시작</strong>합니다. <code class="inline">replaceState</code>(advanceIndex=false)에서도
+이 분기는 인덱스를 0으로 시작합니다.
+</div>
+
+<div class="note">
+<strong>누가 pushState/replaceState를 부르나?</strong> Next.js의 <code class="inline">router.push()</code>,
+<code class="inline">&lt;Link&gt;</code> 클릭, 그리고 Next 내부 라우팅이 호출합니다. 즉 사용자가 라우팅할 때마다
+이 패치가 자동으로 끼어들어 메타데이터를 기록합니다. (이 라이브러리가 직접 부르는 게 아닙니다.)
+</div>
+
+<!-- ============================================ -->
+<h2 class="sec" id="init">5. initializeHistoryStateSyncOnce 단계별 분해</h2>
+
+<p>이 함수가 이 파일의 심장입니다(<code class="inline">history-augmentation.ts:126-200</code>). 위에서 본 부품들을 6단계로 엮습니다.</p>
+
+<!-- ===== step 1 ===== -->
+<h3 id="s1">① 싱글톤 가드 — 두 번 패칭하지 않는다</h3>
+<pre><span class="ln">132</span><span class="kw">if</span> (_isHistoryStateSyncInitialized) {
+<span class="ln">133</span>  <span class="kw">return</span> { setRenderedStateAndSyncToHistory: _setRenderedStateAndSyncToHistory };
+<span class="ln">134</span>}</pre>
+<div class="purpose">
+<span class="tag 목적">목적</span>
+<div>이미 패칭이 끝났다면, 새로 패칭하지 말고 기존 함수만 돌려준다.</div>
+</div>
+<div class="purpose">
+<span class="tag 이유">이유</span>
+<div><code class="inline">createRenderedStateContext()</code>는 popstate 핸들러가 생성될 때마다 이 함수를 호출합니다.
+가드가 없으면 <strong>이미 패칭된 함수를 또 패칭</strong>하게 되어, 인덱스가 한 번에 2씩 증가하는 등 추적이 망가집니다.
+"Once"라는 이름이 여기서 보장됩니다.</div>
+</div>
+
+<!-- ===== step 2 ===== -->
+<h3 id="s2">② 원본 메서드 백업</h3>
+<pre><span class="ln">139</span><span class="kw">const</span> originalHistoryPushState = window.history.pushState;
+<span class="ln">140</span><span class="kw">const</span> originalHistoryReplaceState = window.history.replaceState;</pre>
+<div class="purpose">
+<span class="tag 목적">목적</span>
+<div>패칭하기 전에 브라우저의 <strong>진짜</strong> 함수를 변수에 보관해 둔다.</div>
+</div>
+<div class="purpose">
+<span class="tag 이유">이유</span>
+<div>패치도 결국 "실제로 history를 바꾸는" 일은 원본에 위임해야 합니다(<code class="inline">original.call(...)</code>).
+백업해 두지 않으면 패치가 자기 자신을 부르는 무한 재귀에 빠지거나 진짜 동작이 사라집니다.
+<code class="inline">DEBUG</code>일 때는 원본을 <code class="inline">window.__next_navigation_debug</code>에도 노출합니다(<code class="inline">:142-147</code>).</div>
+</div>
+
+<!-- ===== step 3 ===== -->
+<h3 id="s3">③ 캡처된 세션 복원, 없으면 fresh 시작</h3>
+<pre><span class="ln">149</span><span class="com">// 캡처된 세션(새로고침)이 있으면 복원, 없으면(진짜 첫 방문) fresh 시작.</span>
+<span class="ln">150</span><span class="kw">if</span> (_capturedSessionStateAtModuleLoad) {
+<span class="ln">151</span>  <span class="fn">setRenderedState</span>(_capturedSessionStateAtModuleLoad);                       <span class="com">// ← 복원</span>
+<span class="ln">152</span>} <span class="kw">else</span> {
+<span class="ln">153</span>  <span class="fn">setRenderedState</span>({ historyIndex: <span class="num">0</span>, sessionToken: <span class="fn">generateSessionToken</span>() }); <span class="com">// ← 첫 방문</span>
+<span class="ln">154</span>}</pre>
+<div class="purpose">
+<span class="tag 목적">목적</span>
+<div>모듈 포인터를 <strong>이전 세션이 있으면 그 값으로 복원</strong>하고, 없으면
+<span class="kvs">{ historyIndex: 0, 새 토큰 }</span>으로 초기화한다. 새로고침이면 원래 세션에 재합류하고,
+진짜 첫 방문이면 "내 세션의 0번 진입점"으로 출발한다.</div>
+</div>
+<div class="purpose">
+<span class="tag 이유">이유</span>
+<div>이전 세션의 인덱스/토큰은 <strong>모듈 평가 시점에 이미 캡처</strong>해 두었습니다
+(<a href="#captured" style="color:var(--accent)">전용 절</a>). 그래서 새로고침이라도 과거를 버리지 않고 그대로 복원해,
+back/forward를 인덱스(delta)로 정상 구분합니다. 이 시점까지 <code class="inline">_renderedState</code>는
+무효값 <span class="kvs">{ -1, "" }</span>이었고, 여기서 비로소 유효해집니다.</div>
+</div>
+
+<!-- ===== step 4 ===== -->
+<h3 id="s4">④ 상태 갱신 함수 "정의" (아직 실행 아님)</h3>
+<pre><span class="ln">159</span>_setRenderedStateAndSyncToHistory = ({ renderedState, shouldSyncToHistory }) => {
+<span class="ln">160</span>  debug(…);
+<span class="ln">164</span>  <span class="fn">setRenderedState</span>(renderedState);                  <span class="com">// 1) 항상 모듈 포인터 갱신</span>
+<span class="ln">165</span>
+<span class="ln">166</span>  <span class="kw">if</span> (shouldSyncToHistory) {                          <span class="com">// 2) 필요할 때만 history.state 반영</span>
+<span class="ln">167</span>    originalHistoryReplaceState.<span class="fn">call</span>(
+<span class="ln">168</span>      window.history,
+<span class="ln">169</span>      <span class="fn">withTrackingMetadata</span>(window.history.state, renderedState),
+<span class="ln">170</span>      <span class="str">""</span>,
+<span class="ln">171</span>      window.location.href                            <span class="com">// URL은 그대로, state만 교체</span>
+<span class="ln">172</span>    );
+<span class="ln">173</span>  }
+<span class="ln">174</span>};</pre>
+<div class="warn">
+<strong>주의 — 이 단계는 "선언"일 뿐, 여기서 상태가 바뀌지 않습니다.</strong>
+이 코드는 모듈 변수 <code class="inline">_setRenderedStateAndSyncToHistory</code>에 <strong>함수(클로저)를 할당</strong>할 뿐입니다.
+본문은 <em>나중에 이 함수가 호출될 때</em> 비로소 실행됩니다. 실제 첫 실행은 ⑤(시드)이고,
+이후 popstate 핸들러가 통과 분기에서 호출합니다.
+</div>
+<div class="purpose">
+<span class="tag 목적">목적</span>
+<div>"우리 추적 상태(포인터)"와 "브라우저의 <code class="inline">history.state</code>(메타데이터)"를 동기화하는
+<strong>단일 창구</strong>를 미리 정의해 둔다.</div>
+</div>
+<div class="purpose">
+<span class="tag 구현">구현</span>
+<div><strong>호출되면</strong> — 항상 <code class="inline">setRenderedState</code>로 포인터를 갱신하고,
+<code class="inline">shouldSyncToHistory: true</code>일 때만 추가로 <strong>원본 replaceState</strong>로
+현재 진입점의 <code class="inline">history.state</code>에 우리 메타데이터를 덮어씁니다. URL은 그대로 둡니다.
+이 클로저는 <span class="file-pill">rendered-state-context.ts</span>가 <code class="inline">setState</code>(sync OFF) 한 이름으로만 감싸 노출합니다.
+sync ON 경로는 외부로 노출되지 않고, initialize의 ⑤ 시드가 이 클로저를 <code class="inline">shouldSyncToHistory: true</code>로 <strong>직접</strong> 한 번 부르는 게 전부입니다(과거의 <code class="inline">setStateAndSyncToHistory</code> 래퍼는 경계 leave 경로가 <code class="inline">pendingRestore</code>로 병합되며 제거됨).</div>
+</div>
+
+<!-- ===== step 5 ===== -->
+<h3 id="s5">⑤ 현재 진입점에 메타데이터 시드 (복원 세션 재-stamp 포함)</h3>
+<pre><span class="ln">183</span><span class="kw">if</span> (
+<span class="ln">184</span>  !window.history.state ||
+<span class="ln">185</span>  window.history.state[STACK_INDEX_KEY] == <span class="kw">null</span> ||
+<span class="ln">186</span>  window.history.state[SESSION_TOKEN_KEY] == <span class="kw">null</span>
+<span class="ln">187</span>) {
+<span class="ln">188</span>  _setRenderedStateAndSyncToHistory({
+<span class="ln">189</span>    renderedState: <span class="fn">getRenderedState</span>(),
+<span class="ln">190</span>    shouldSyncToHistory: <span class="kw">true</span>,
+<span class="ln">191</span>  });
+<span class="ln">192</span>}</pre>
+<div class="purpose">
+<span class="tag 목적">목적</span>
+<div>지금 머무는 진입점에 우리 메타데이터가 아직 없으면, 즉시 심어준다.
+<strong>첫 방문이면</strong> fresh <span class="kvs">{ index:0, token }</span>을, <strong>새로고침이면</strong>
+③에서 복원한 세션을 그 진입점에 <strong>다시 stamp</strong>한다.</div>
+</div>
+<div class="purpose">
+<span class="tag 이유">이유</span>
+<div>패치(⑥)는 <em>앞으로</em> 일어날 push/replace에만 끼어듭니다. 하지만 사용자가 지금 서 있는
+<strong>현재 진입점</strong>은 패치 설치 <em>전에</em> 이미 만들어져 push를 거친 적이 없습니다 → 메타데이터가 비었습니다.
+게다가 새로고침의 경우 복원한 토큰은 <strong>메모리에만</strong> 살아 있고, 디스크의 그 진입점은
+(Next가 hydration 때 덮어써서) 여전히 token-less입니다. 그래서 여기서 한 번 수동 주입해
+<strong>"패치가 영원히 닿지 못하는 0번 진입점"을 부트스트랩</strong>합니다.</div>
+</div>
+
+<div class="ascii">  [진입점 0]          ← 이미 존재. 패치 이전 생성. 메타데이터 ✗
+     │  (여기서 initialize → 패치 설치)
+     │                ⑤ 분기가 0번에 메타데이터를 손으로 심음 ✓
+     ▼
+  router.push() ─► 패치된 pushState ─► [진입점 1] 메타데이터 자동 기록 ✓
+     ▼
+  router.push() ─► 패치된 pushState ─► [진입점 2] 메타데이터 자동 기록 ✓</div>
+
+<h4>세 조건은 왜 OR인가</h4>
+<p>세 검사는 <code class="inline">||</code>로 묶여 <strong>하나라도 참이면</strong> 주입합니다.
+<code class="inline">== null</code>은 <code class="inline">null</code>과 <code class="inline">undefined</code>를 <strong>모두</strong> 잡습니다(키가 없으면 값은 <code class="inline">undefined</code>).</p>
+<table class="trace">
+<tr><th>조건</th><th>참이 되는 때</th><th>구체 시나리오</th></tr>
+<tr>
+  <td><code>!window.history.state</code></td>
+  <td><code>history.state</code>가 <code>null</code></td>
+  <td>URL 직접 입력 · 외부 링크 · 새 탭/북마크 — 누구도 <code>pushState(state)</code>를 부른 적 없는 순수 첫 진입점</td>
+</tr>
+<tr>
+  <td><code>STACK_INDEX_KEY == null</code></td>
+  <td>state는 있으나 <strong>인덱스 키</strong> 누락</td>
+  <td>Next가 <code>{url, as, options, __N, key}</code>를 먼저 채움 → 객체는 non-null인데 우리 키만 없음</td>
+</tr>
+<tr>
+  <td><code>SESSION_TOKEN_KEY == null</code></td>
+  <td>state는 있으나 <strong>토큰 키</strong> 누락</td>
+  <td>위와 같은 상황의 토큰 쪽 방어. 둘 중 하나만 빠져도 추적이 깨지므로 따로 검사</td>
+</tr>
+</table>
+<div class="note">
+<strong>실제 Next.js에선 사실상 항상 <code class="inline">true</code></strong>입니다 — Next가 init 때 <code class="inline">history.state</code>를
+덮어써 디스크 진입점이 token-less가 되기 때문(주석 <code class="inline">:180-181</code>). 그래도 <code class="inline">if</code>로 검사하는 건
+<strong>방어 코드</strong>입니다: 비-Next 환경이나 이미 유효한 메타데이터가 있는 경우, 그것을
+현재 포인터 값으로 덮어쓰지 않고 보존하기 위함입니다(idempotent).
+</div>
+
+<!-- ===== step 6 ===== -->
+<h3 id="s6">⑥ pushState / replaceState 패칭 + 마무리</h3>
+<pre><span class="ln">194</span>window.history.pushState    = <span class="fn">createPatchedHistoryMethod</span>(originalHistoryPushState, <span class="kw">true</span>);
+<span class="ln">195</span>window.history.replaceState = <span class="fn">createPatchedHistoryMethod</span>(originalHistoryReplaceState, <span class="kw">false</span>);
+<span class="ln">196</span>
+<span class="ln">197</span>_isHistoryStateSyncInitialized = <span class="kw">true</span>;            <span class="com">// 이제 두 번 다시 패칭 안 함 (①의 짝)</span>
+<span class="ln">198</span>
+<span class="ln">199</span><span class="kw">return</span> { setRenderedStateAndSyncToHistory: _setRenderedStateAndSyncToHistory };</pre>
+<div class="purpose">
+<span class="tag 목적">목적</span>
+<div>같은 팩토리(④절)에 <strong>원본 + advanceIndex 플래그</strong>만 달리 넣어 두 메서드를 교체한다.
+<code class="inline">true</code>는 인덱스 +1(새 진입점), <code class="inline">false</code>는 인덱스 유지(덮어쓰기).</div>
+</div>
+<div class="purpose">
+<span class="tag 이유">이유</span>
+<div><code class="inline">pushState</code>는 스택에 한 칸 더 쌓지만, <code class="inline">replaceState</code>는 같은 칸을 덮어씁니다.
+이 차이를 정확히 반영해야 delta 계산이 어긋나지 않습니다. 또 Next가 라우팅 중 replaceState로
+state를 갈아끼울 때 우리 메타데이터가 날아가지 않도록, replaceState도 반드시 패칭해 매번 다시 심습니다.
+마지막으로 플래그를 켜고(①의 짝), ④의 sync 함수를 호출자(<code class="inline">createRenderedStateContext</code>)에게 돌려줍니다.</div>
+</div>
+
+<!-- ============================================ -->
+<h2 class="sec" id="consume">7. 패칭의 결과는 언제, 어떻게 쓰이나</h2>
+
+<p>
+몽키패칭은 그 자체로는 아무 일도 하지 않습니다. 단지 <strong>모든 history 진입점에 메타데이터를 기록해두는</strong> 준비 작업입니다.
+진짜 소비는 사용자가 <strong>뒤로/앞으로 가기를 눌러 popstate가 발생할 때</strong>
+<span class="file-pill">useInterceptPopState.ts</span>에서 일어납니다.</p>
+
+<div class="flow">
+<div class="step"><div class="num">1</div><div class="body">
+popstate 발생 → <code class="inline">history.state</code>를 <span class="file-pill">parse-history-state.ts</span>의
+<code class="inline">parseHistoryState()</code>에 넘김 → 패치가 심어둔
+<code class="inline">__next_navigation_stack_index</code>(=<span class="kvs">nextHistoryIndex</span>)와
+<code class="inline">__next_session_token</code>(=<span class="kvs">nextSessionToken</span>)을 꺼낸다.</div></div>
+
+<div class="step"><div class="num">2</div><div class="body">
+<strong>[Confirmed]</strong> 검사 — 직전에 핸들러가 승인해 우리가 부른 go/back이면 그대로 통과(<code class="inline">handleConfirmedNavigation</code>).</div></div>
+
+<div class="step"><div class="num">3</div><div class="body">
+<strong>토큰 비교</strong>: <code class="inline">hasSessionTokenMismatch(next, current)</code>.
+다르면 → <strong>진짜 세션 경계</strong>(<code class="inline">handleSessionBoundary</code>): 토큰 없는 진입점이거나 외래 토큰.
+인덱스를 비교할 수 없어 "뒤로"로 가정하고 <code class="inline">history.go(1)</code>로 URL 복원.
+<strong>새로고침은 토큰이 모듈-평가에서 복원되어 여기 안 옴</strong> — 아래 delta 분기로 처리됩니다.</div></div>
+
+<div class="step"><div class="num">4</div><div class="body">
+<strong>delta 계산</strong>(<code class="inline">handleInternalNavigation</code>): <code class="inline">delta = nextHistoryIndex − currentRenderedState.historyIndex</code>.
+이 한 줄이 몽키패칭의 존재 이유입니다.<br>
+<span class="pill">delta &lt; 0</span> 뒤로 → <strong>가드.</strong> <code class="inline">go(-delta)</code>로 복원 후 핸들러.
+<span class="pill">delta &gt; 0</span> 앞으로 → 통과. <span class="pill">delta = 0</span> 복원 완료 신호 → 보류 핸들러 실행.</div></div>
+
+<div class="step"><div class="num">5</div><div class="body">
+통과 분기에선 <strong>대부분 <code class="inline">setState</code>로 포인터만</strong> 갱신(도착지 메타데이터가 이미 정확).
+<code class="inline">history.state</code>까지 다시 쓰는 sync는 비었거나 신뢰 불가일 때만 일어난다. 루프가 닫힌다.</div></div>
+</div>
+
+<div class="good">
+<strong>요점:</strong> initialize/패치는 "데이터를 심는 쪽(write)",
+popstate 핸들러는 "그 데이터를 읽어 방향을 판단하는 쪽(read)"입니다.
+둘은 모듈 싱글톤 <code class="inline">_renderedState</code>와 <code class="inline">history.state</code>를 공유 채널로 씁니다.
+</div>
+
+<!-- ============================================ -->
+<h2 class="sec" id="flow">8. 전체 흐름도</h2>
+
+<div class="ascii">  모듈 평가 (hydration보다 먼저)
+        │  history.state 에서 이전 토큰 캡처 → _capturedSessionStateAtModuleLoad
+        ▼
+  앱 시작 / 첫 popstate 핸들러 생성 → createRenderedStateContext()
+        │  호출
+        ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │  initializeHistoryStateSyncOnce()   (딱 한 번)            │
+  │                                                           │
+  │  ① 이미 init?  ──yes──► 기존 sync 함수 반환 (끝)          │
+  │  ② 원본 push/replaceState 백업                            │
+  │  ③ _renderedState = 캡처 세션 복원 or fresh {0, 새 토큰}  │
+  │  ④ sync 클로저 정의 (_setRenderedStateAndSyncToHistory)   │
+  │  ⑤ 현재 진입점에 메타데이터 없으면 → 시드(복원 세션 재-stamp)│
+  │  ⑥ push/replaceState = createPatchedHistoryMethod(원본, ±)│
+  │     → _isHistoryStateSyncInitialized = true              │
+  └─────────────────────────────────────────────────────────┘
+        │
+        ▼ (이후 런타임)
+  router.push / Link 클릭 ─► 패치된 push/replaceState
+        │     ├ push:    index +1, 메타데이터 기록
+        │     └ replace: index 유지, 메타데이터 갱신
+        ▼
+  사용자가 뒤로/앞으로 가기 ─► popstate
+        │
+        ▼
+  parseHistoryState(history.state) ──► { nextHistoryIndex, nextSessionToken }
+        │
+        ├─ [Confirmed]? ─► 우리가 부른 go/back → 통과
+        │
+        ├─ token 불일치? ─► [Session Boundary] 진짜 경계(토큰 없음/외래)
+        │     history.go(1) 복원 → 핸들러
+        │     ※ 새로고침은 토큰 복원 → 여기 안 옴, 아래 delta 분기로
+        │
+        └─ delta = nextIndex − currentIndex   (새로고침도 이 분기)
+              ├─ delta &lt; 0 : 뒤로 → 가드! go(-delta) 복원 후 핸들러
+              ├─ delta &gt; 0 : 앞으로 → 통과
+              └─ delta = 0 : 복원 완료 → 보류 핸들러 실행</div>
+
+<!-- ============================================ -->
+<h2 class="sec" id="summary">9. 한눈에 요약</h2>
+
+<table>
+<tr><th>질문</th><th>답</th></tr>
+<tr><td>무엇을 몽키패칭하나?</td><td><code>window.history.pushState</code> 와 <code>window.history.replaceState</code></td></tr>
+<tr><td>어떻게 패칭하나?</td><td>단일 팩토리 <code>createPatchedHistoryMethod(원본, advanceIndex)</code> — push는 <code>true</code>, replace는 <code>false</code></td></tr>
+<tr><td>왜 하나?</td><td>History API에 "현재 위치 인덱스"가 없어 popstate의 방향(뒤/앞)을 알 수 없음. Navigation API는 Safari/Firefox 미지원.</td></tr>
+<tr><td>무엇을 심나?</td><td><code>__next_navigation_stack_index</code>(위치) + <code>__next_session_token</code>(세션 ID) — <code>withTrackingMetadata</code>가 병합</td></tr>
+<tr><td>push 패치 동작</td><td>인덱스 <strong>+1</strong> 후 메타데이터 주입 → 원본 호출 (새 진입점)</td></tr>
+<tr><td>replace 패치 동작</td><td>인덱스 <strong>유지</strong>, 메타데이터만 재주입 → 원본 호출 (덮어쓰기)</td></tr>
+<tr><td>왜 "Once"인가?</td><td>중복 패칭 시 인덱스가 2씩 증가해 추적이 깨짐. <code>_isHistoryStateSyncInitialized</code> 플래그로 1회만.</td></tr>
+<tr><td>토큰은 어떻게 정하나?</td><td>모듈-평가 시점에 이전 토큰을 캡처해 복원(<code>_capturedSessionStateAtModuleLoad</code>), 없을 때만(첫 방문) <code>generateSessionToken()</code>. 새로고침은 재합류 → mismatch 아님.</td></tr>
+<tr><td>현재 진입점(0번)은?</td><td>패치가 닿지 못하므로 ⑤에서 수동 시드. 첫 방문은 fresh, 새로고침은 복원 세션 재-stamp.</td></tr>
+<tr><td>sync ON은 언제?</td><td>도착 칸 메타데이터가 비었을 때 — ⑤ 시드 <strong>단 1곳</strong>뿐. 나머지 통과 분기는 도착 칸이 이미 정확해 멱등이라 OFF. (경계 leave의 옛 sync ON은 <code>pendingRestore</code> 병합으로 제거됨.)</td></tr>
+<tr><td>심은 데이터는 언제 쓰이나?</td><td>popstate 시 <code>useInterceptPopState.ts</code>가 읽어 <strong>delta 계산 + 토큰 비교</strong> → 뒤로 가기만 가드.</td></tr>
+</table>
+
+<p style="margin-top:40px;color:var(--muted);font-size:13px;">
+관련 파일: <span class="file-pill">useInterceptPopState.ts</span> (popstate 핸들러),
+<span class="file-pill">rendered-state-context.ts</span> (두 sync 래퍼),
+<span class="file-pill">parse-history-state.ts</span> (메타데이터 파싱),
+<code class="inline">docs/01-why-this-library.md</code>.
+</p>
+
+</main>
+</div>
+</body>
+</html>
