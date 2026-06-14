@@ -49,7 +49,7 @@ BackNavigationHandlerProvider (root wrapper)
 └── useInterceptPopState (popstate interception - core logic)
     └── useInterceptPopState.helper/
         ├── history-augmentation.ts (History API patching)
-        ├── interception-state.ts (isRestoringUrl, isNavigationConfirmed flags)
+        ├── interception-state.ts (isNavigationConfirmed flag)
         ├── rendered-state-context.ts (historyIndex, sessionToken state)
         ├── parse-history-state.ts (extract token/index from history.state)
         ├── handler-execution.ts (run handler chain)

@@ -1,53 +1,41 @@
 /**
  * History API Augmentation
  *
- * Patches the browser's History API to track navigation stack index and session token.
+ * The History API exposes no stack index, so there's no native way to tell how far a
+ * navigation moved or whether it was back or forward. (The Navigation API has
+ * `navigation.currentEntry.index`, but Safari/Firefox don't support it.)
  *
- * Problem: The History API doesn't expose a stack index - there's no way to know
- * the current position in the history stack or calculate the delta between navigations.
- * The Navigation API has `navigation.currentEntry.index` but Safari/Firefox don't support it.
+ * Workaround: monkey-patch `history.pushState` / `history.replaceState` to inject our own
+ * metadata into `history.state`:
+ * - `__next_navigation_stack_index` — position in the stack (delta tells back from forward)
+ * - `__next_session_token` — identifies the session (detects refresh / external entry)
  *
- * Solution: Monkey-patch `history.pushState` and `history.replaceState` to inject
- * custom metadata (__next_navigation_stack_index, __next_session_token) into history.state.
- * This allows us to track position and detect session changes (refresh, external entry).
- *
- * MDN References:
- * - History.pushState(): https://developer.mozilla.org/en-US/docs/Web/API/History/pushState
- *   Signature: pushState(state, unused, url?)
- *   "The unused parameter exists for historical reasons, and cannot be omitted;
- *    passing an empty string is safe against future changes to the method."
- *
- * - History.replaceState(): https://developer.mozilla.org/en-US/docs/Web/API/History/replaceState
- *   Signature: replaceState(state, unused, url?)
- *   Same signature as pushState, replaces current history entry instead of adding new one.
- *
- * @see docs/01-why-this-library.md for detailed explanation
+ * @see docs/01-why-this-library.md for the detailed explanation
  */
 
 import { RenderedState } from "./types";
-import { DEBUG } from "../@shared/debug";
+import { DEBUG, debug } from "../@shared/debug";
+
+const SESSION_TOKEN_KEY = "__next_session_token";
+const STACK_INDEX_KEY = "__next_navigation_stack_index";
 
 // Capture the previous session's token + index at MODULE-EVALUATION time.
 //
-// The browser preserves the current entry's history.state across a reload until
-// roughly the `load` event; Next.js Pages Router only overwrites it slightly later,
-// during router hydration — which is also when this library's provider mounts. A read
-// at provider-mount time therefore always sees Next's freshly-rewritten (token-less)
-// state and cannot recover the previous token. Module evaluation runs earlier, during
-// bundle execution before hydration, so the previous token is still readable here.
+// The browser preserves the entry's history.state across a reload until ~the `load` event;
+// Next.js Pages Router overwrites it slightly later, during router hydration (when our
+// provider mounts). So a read at provider-mount time only sees Next's token-less rewrite.
+// Module evaluation runs earlier — before hydration — so the previous token is still here.
 //
-// Recovering it lets the refreshed entry rejoin its original session, so back/forward
-// stay distinguishable by index after a refresh instead of every popstate looking like
-// a session-boundary mismatch (which forced forward navigation to be misread as back).
+// Recovering it lets the refreshed entry rejoin its original session, keeping back/forward
+// distinguishable by index instead of every post-refresh popstate looking like a boundary.
 const _capturedSessionStateAtModuleLoad: RenderedState | null =
   typeof window !== "undefined" &&
   window.history &&
   window.history.state &&
-  window.history.state.__next_session_token
+  window.history.state[SESSION_TOKEN_KEY]
     ? {
-        sessionToken: window.history.state.__next_session_token,
-        historyIndex:
-          Number(window.history.state.__next_navigation_stack_index) || 0,
+        sessionToken: window.history.state[SESSION_TOKEN_KEY],
+        historyIndex: Number(window.history.state[STACK_INDEX_KEY]) || 0,
       }
     : null;
 
@@ -60,16 +48,11 @@ let _setRenderedStateAndSyncToHistory: (params: {
 }) => void = () => {};
 
 /**
- * Generates a random session token.
+ * Generates a random session token for a brand-new session.
  *
- * Each page load always produces a new token. Next.js Pages Router overwrites
- * `history.state` during initialization, before this library's provider mounts,
- * so the previous session's token cannot be recovered. As a consequence, every
- * popstate event after a refresh (both back and forward) is seen as a token
- * mismatch, which means forward navigation is also treated like back navigation.
- *
- * Note: back navigation from an external domain does not fire a popstate in
- * this document's context and is therefore outside this library's scope.
+ * Used only when there is no prior session to recover — a genuine first visit, or a
+ * pushState/replaceState that runs before any token exists. After a refresh the previous
+ * token is instead restored at module-eval (see _capturedSessionStateAtModuleLoad).
  */
 export function generateSessionToken(): string {
   return Math.random().toString(36).substring(2);
@@ -90,13 +73,53 @@ function setRenderedState(renderedState: RenderedState): void {
 }
 
 /**
- * Initializes history state synchronization (singleton - only runs once).
+ * Merges our tracking metadata into a history.state object.
+ */
+function withTrackingMetadata(
+  historyState: any,
+  { sessionToken, historyIndex }: RenderedState
+) {
+  return {
+    ...historyState,
+    [SESSION_TOKEN_KEY]: sessionToken,
+    [STACK_INDEX_KEY]: historyIndex,
+  };
+}
+
+/**
+ * Builds a replacement for history.pushState / history.replaceState that keeps our
+ * rendered state in sync and stamps tracking metadata onto every entry.
  *
- * This function:
- * 1. Starts with a fresh session token and initial historyIndex (0)
- * 2. Patches history.pushState to increment historyIndex on each call
- * 3. Patches history.replaceState to maintain current index
- * 4. Injects session token and index into history.state for tracking
+ * pushState advances the index by one; replaceState keeps it. Both start a fresh session
+ * if none exists yet.
+ */
+function createPatchedHistoryMethod(
+  original: History["pushState"],
+  advanceIndex: boolean
+): History["pushState"] {
+  return function (this: History, historyState, unused, url) {
+    const current = getRenderedState();
+    const next: RenderedState = current.sessionToken
+      ? {
+          sessionToken: current.sessionToken,
+          historyIndex: current.historyIndex + (advanceIndex ? 1 : 0),
+        }
+      : { sessionToken: generateSessionToken(), historyIndex: 0 };
+
+    setRenderedState(next);
+    debug(
+      `history.${advanceIndex ? "pushState" : "replaceState"}: index=${next.historyIndex}, token=${next.sessionToken}`
+    );
+    original.call(this, withTrackingMetadata(historyState, next), unused, url);
+  };
+}
+
+/**
+ * Initializes history state synchronization (singleton — runs once).
+ *
+ * Recovers the previous session if one was captured at module-eval, otherwise starts a
+ * fresh one; seeds the current entry with metadata; and patches pushState/replaceState so
+ * every subsequent entry is stamped.
  *
  * @returns Object with setRenderedStateAndSyncToHistory function
  */
@@ -110,7 +133,7 @@ export function initializeHistoryStateSyncOnce(): {
     return { setRenderedStateAndSyncToHistory: _setRenderedStateAndSyncToHistory };
   }
 
-  if (DEBUG) console.log("initializeHistoryStateSyncOnce: initializing");
+  debug("initializeHistoryStateSyncOnce: initializing");
 
   // Store original methods before patching
   const originalHistoryPushState = window.history.pushState;
@@ -123,135 +146,53 @@ export function initializeHistoryStateSyncOnce(): {
     };
   }
 
-  // Restore the previous session if we captured one at module-eval time (before
-  // Next wiped history.state); otherwise start a fresh session. Restoring makes the
-  // refreshed entry rejoin its original session so back/forward after a refresh are
-  // told apart by index, fixing the direction-ambiguity limitation.
+  // Recover the captured session (refresh) or start fresh (genuine first visit).
   if (_capturedSessionStateAtModuleLoad) {
-    if (DEBUG)
-      console.log(
-        `initializeHistoryStateSyncOnce: restoring session token=${_capturedSessionStateAtModuleLoad.sessionToken}, index=${_capturedSessionStateAtModuleLoad.historyIndex}`
-      );
     setRenderedState(_capturedSessionStateAtModuleLoad);
   } else {
-    setRenderedState({
-      historyIndex: 0,
-      sessionToken: generateSessionToken(),
-    });
+    setRenderedState({ historyIndex: 0, sessionToken: generateSessionToken() });
   }
+  debug(
+    `initializeHistoryStateSyncOnce: initial index=${getRenderedState().historyIndex}, token=${getRenderedState().sessionToken}`
+  );
 
-  if (DEBUG) {
-    const currentRenderedState = getRenderedState();
-    console.log(
-      `initializeHistoryStateSyncOnce: initial historyIndex=${currentRenderedState.historyIndex}, sessionToken=${currentRenderedState.sessionToken}`
+  _setRenderedStateAndSyncToHistory = ({ renderedState, shouldSyncToHistory }) => {
+    debug(
+      `setRenderedStateAndSyncToHistory: index=${renderedState.historyIndex}, token=${renderedState.sessionToken}, sync=${shouldSyncToHistory}`
     );
-  }
-
-  // Create the state update function
-  _setRenderedStateAndSyncToHistory = ({
-    renderedState,
-    shouldSyncToHistory,
-  }: {
-    renderedState: RenderedState;
-    shouldSyncToHistory: boolean;
-  }) => {
-    if (DEBUG) {
-      console.log(
-        `setRenderedStateAndSyncToHistory: historyIndex=${renderedState.historyIndex}, sessionToken=${renderedState.sessionToken}, shouldSyncToHistory=${shouldSyncToHistory}`
-      );
-    }
 
     setRenderedState(renderedState);
 
-    // Optionally sync to history.state via replaceState
     if (shouldSyncToHistory) {
-      const modifiedHistoryState = {
-        ...window.history.state,
-        __next_session_token: renderedState.sessionToken,
-        __next_navigation_stack_index: renderedState.historyIndex,
-      };
-
       originalHistoryReplaceState.call(
         window.history,
-        modifiedHistoryState,
+        withTrackingMetadata(window.history.state, renderedState),
         "",
         window.location.href
       );
     }
   };
 
-  // Bootstrap metadata onto the current history entry.
-  // The patched pushState/replaceState only inject metadata into entries created
-  // after patching, so the entry the user is already sitting on has none — we seed
-  // it with the current rendered state, otherwise a later back navigation to it
-  // would read empty metadata (missing index forces 0, missing token forces a
-  // session mismatch).
-  //
-  // What we write is the rendered state set just above. After a refresh that is the
-  // RESTORED session (token + index captured at module-eval), so this step re-stamps
-  // the current entry and is what makes it rejoin its original session — without it,
-  // the restored token would live only in memory and the entry on disk would still be
-  // token-less. On a genuine first visit there is nothing to restore, so it is a fresh
-  // { index: 0, token }.
-  //
-  // In Next.js Pages Router the condition is effectively always true: Next overwrites
-  // history.state during init (before our provider mounts), wiping the entry's
-  // metadata — so we always re-inject. The check is kept for non-Next environments (or
-  // if Next's behavior changes) where the entry already carries valid metadata; then
-  // we leave it untouched.
-  //
-  // `== null` (not `===`) matches both null and undefined, since a missing key reads
-  // back as undefined.
+  // Seed metadata onto the current entry. The patched push/replace only stamp entries
+  // created after patching, so the entry the user is already on has none. After a refresh
+  // this re-stamps the RESTORED session (otherwise the recovered token would live only in
+  // memory, with the on-disk entry still token-less); on a first visit it stamps the fresh
+  // { index: 0, token }. In Next.js the guard is effectively always true (Next wipes the
+  // metadata during init); it's kept for non-Next environments that may already carry it.
+  // `== null` matches both null and undefined (a missing key reads back as undefined).
   if (
     !window.history.state ||
-    window.history.state.__next_navigation_stack_index == null ||
-    window.history.state.__next_session_token == null
+    window.history.state[STACK_INDEX_KEY] == null ||
+    window.history.state[SESSION_TOKEN_KEY] == null
   ) {
-    _setRenderedStateAndSyncToHistory({ renderedState: getRenderedState(), shouldSyncToHistory: true });
+    _setRenderedStateAndSyncToHistory({
+      renderedState: getRenderedState(),
+      shouldSyncToHistory: true,
+    });
   }
 
-  // Patch pushState: increment index on each navigation
-  window.history.pushState = function (historyState, unused, url) {
-    const currentRenderedState = getRenderedState();
-    const nextRenderedState: RenderedState = currentRenderedState.sessionToken
-      ? { sessionToken: currentRenderedState.sessionToken, historyIndex: currentRenderedState.historyIndex + 1 }
-      : { sessionToken: generateSessionToken(), historyIndex: 0 };
-
-    setRenderedState(nextRenderedState);
-
-    if (DEBUG) {
-      console.log(`history.pushState: historyIndex=${nextRenderedState.historyIndex}, sessionToken=${nextRenderedState.sessionToken}`);
-    }
-
-    // Inject our tracking metadata into the state object
-    const modifiedHistoryState = {
-      ...historyState,
-      __next_session_token: nextRenderedState.sessionToken,
-      __next_navigation_stack_index: nextRenderedState.historyIndex,
-    };
-    originalHistoryPushState.call(this, modifiedHistoryState, unused, url);
-  };
-
-  // Patch replaceState: maintain current index, just update state
-  window.history.replaceState = function (historyState, unused, url) {
-    const currentRenderedState = getRenderedState();
-    const nextRenderedState: RenderedState = currentRenderedState.sessionToken
-      ? currentRenderedState
-      : { sessionToken: generateSessionToken(), historyIndex: 0 };
-
-    setRenderedState(nextRenderedState);
-
-    if (DEBUG) {
-      console.log(`history.replaceState: historyIndex=${nextRenderedState.historyIndex}, sessionToken=${nextRenderedState.sessionToken}`);
-    }
-
-    const modifiedHistoryState = {
-      ...historyState,
-      __next_session_token: nextRenderedState.sessionToken,
-      __next_navigation_stack_index: nextRenderedState.historyIndex,
-    };
-    originalHistoryReplaceState.call(this, modifiedHistoryState, unused, url);
-  };
+  window.history.pushState = createPatchedHistoryMethod(originalHistoryPushState, true);
+  window.history.replaceState = createPatchedHistoryMethod(originalHistoryReplaceState, false);
 
   _isHistoryStateSyncInitialized = true;
 

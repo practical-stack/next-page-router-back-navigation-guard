@@ -30,14 +30,6 @@ export function createRenderedStateContext() {
     setState: (renderedState: RenderedState): void => {
       setRenderedStateAndSyncToHistory({ renderedState, shouldSyncToHistory: false });
     },
-
-    /**
-     * Updates rendered state AND syncs to history.state via replaceState.
-     * Used after navigation is confirmed to ensure history.state matches our state.
-     */
-    setStateAndSyncToHistory: (renderedState: RenderedState): void => {
-      setRenderedStateAndSyncToHistory({ renderedState, shouldSyncToHistory: true });
-    },
   };
 }
 

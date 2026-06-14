@@ -51,7 +51,7 @@ The documents are organized to tell a complete story. Read in order for best und
 | File | Purpose |
 |------|---------|
 | `history-augmentation.ts` | History API patching (index/token injection) |
-| `interception-state.ts` | Interception flags (`isRestoringUrl`, `isNavigationConfirmed`, etc.) |
+| `interception-state.ts` | Shared interception flag (`isNavigationConfirmed`) |
 | `rendered-state-context.ts` | Track current historyIndex and sessionToken |
 | `parse-history-state.ts` | Extract token/index from history.state |
 | `handler-execution.ts` | Run handler chain and determine navigation |

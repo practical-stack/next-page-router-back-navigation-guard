@@ -143,9 +143,6 @@ isNavigationConfirmed flag check
     URL restoration needed before handler callback
           │
           ▼
-    isRestoringUrl = true
-          │
-          ▼
     history.go(1) called → URL restored (forward)
           │
           ▼
@@ -405,22 +402,19 @@ Event ignored (infinite loop prevention)
 
 ### Scenario 8: Token Mismatch Restoration Popstate
 
-When blocking token mismatch, `history.go(1)` triggers another popstate. We use `isRestoringUrl` flag to ignore it.
+When blocking a token mismatch, `history.go(1)` triggers another popstate. That restore lands back on our matching-token entry, so the echo is routed to the internal-navigation path and swallowed by its `delta === 0` branch (same mechanism as Scenario 7) — no separate flag is needed.
 
 ```
 Token Mismatch detected → history.go(1) called
     │
     ▼
-isRestoringUrl = true
+popstate re-fired (by go(1)) → lands on matching-token entry
     │
     ▼
-popstate re-fired (by go(1))
+Routed to internal navigation → delta === 0
     │
     ▼
-Check isRestoringUrl
-    │
-    ▼
-If true → Clear flag and ignore event
+Ignore event (same as Scenario 7)
 ```
 
 ### Scenario 9: Once Handler After Refresh (Empty HandlerMap with preRegisteredHandler)
@@ -468,67 +462,44 @@ With `history.go(1)`:
 ## Complete Flow Diagram
 
 ```
-+------------------------------------------------------------------+
-|                    Back/Forward button clicked                    |
-+------------------------------------------------------------------+
-                                   │
-                                   ▼
-+------------------------------------------------------------------+
-|                      popstate event fired                         |
-+------------------------------------------------------------------+
-                                   │
-                                   ▼
-                    +--------------------------+
-                    │ isNavigationConfirmed?   │  ← Check FIRST
-                    +--------------------------+
-                         │              │
-                        YES            NO
-                         │              │
-                         ▼              ▼
-                   +----------+  +--------------------------+
-                   │ Clear    │  │ Token Mismatch?          │
-                   │ flag,    │  │ (token missing/mismatch) │
-                   │ Allow    │  +--------------------------+
-                   +----------+       │              │
-                                    YES            NO
-                                     │              │
-                                     ▼              ▼
-                   +-------------------------+  +--------------+
-                   │ isRestoringUrl          │  │ delta === 0? │
-                   │ flag?                   │  +--------------+
-                   +-------------------------+       │      │
-                          │          │             YES     NO
-                         YES        NO              │       │
-                          │          │              ▼       ▼
-                          ▼          ▼       +---------+  +--------------+
-                   +----------+  +--------+  │ Ignore  │  │ delta > 0?   │
-                   │ Clear    │  │ handler│  +---------+  │ (forward)    │
-                   │ flag,    │  │ exists?│               +--------------+
-                   │ ignore   │  +--------+                    │      │
-                   +----------+    │    │                    YES     NO
-                                 YES   NO                     │       │
-                                  │     │                     ▼       ▼
-                          +----------+ +-----+         +---------+  +----------+
-                          │ go(1)    │ │Allow│         │ Allow   │  │ handler  │
-                          │ +set flag│ +-----+         +---------+  │ exists?  │
-                          +----------+                              +----------+
-                                │                                      │    │
-                                ▼                                    YES   NO
-                          +--------------+                             │     │
-                          │ setTimeout   │                             ▼     ▼
-                          │ handler call │                      +----------+ +-----+
-                          +--------------+                      │ handler  │ │Allow│
-                                │                               │ callback │ +-----+
-                     +----------+----------+                    +----------+
-                     │                     │                         │
-                     ▼                     ▼              +----------+----------+
-               +----------+         +----------+          │                     │
-               │ Pass     │         │ Block    │          ▼                     ▼
-               │ set flag │         │ stay     │    +----------+         +----------+
-               │ back()   │         +----------+    │ Pass     │         │ Block    │
-               +----------+                         │ set flag │         │ go(-delta)│
-                                                    │ go(delta)│         │ restore  │
-                                                    +----------+         +----------+
+Back/Forward button clicked
+    │
+    ▼
+popstate event fired
+    │
+    ▼
+isNavigationConfirmed?  (a handler already approved this navigation)
+    ├── YES → clear isNavigationConfirmed, allow navigation
+    └── NO
+         │
+         ▼
+        Token Mismatch?  (token missing / different session)
+         │
+         ├── YES → handleSessionBoundary
+         │          ├── handlers registered?
+         │          │    ├── YES → history.go(1) to restore the URL, then (once the
+         │          │    │         browser settles) run the handler:
+         │          │    │           ├── allow → set isNavigationConfirmed, history.back()
+         │          │    │           └── block → stay
+         │          │    └── NO  → run preRegisteredHandler
+         │          │              ├── block → history.go(1) to restore
+         │          │              └── allow → adopt the landed entry, allow
+         │          └── (the go(1) restore's echo lands on the matching-token entry, so it
+         │              is swallowed by the delta === 0 branch below — no extra flag)
+         │
+         └── NO → handleInternalNavigation (classify by index delta)
+                   ├── delta === 0
+                   │     ├── pending restore? → run the deferred handler
+                   │     └── otherwise → ignore (echo of our own go() restore)
+                   ├── delta > 0  → forward navigation → allow
+                   └── delta < 0  → back navigation
+                         ├── handlers registered?
+                         │    ├── YES → history.go(-delta) to restore the URL, then run the
+                         │    │         handler (allow → set isNavigationConfirmed, go(delta);
+                         │    │                   block → stay)
+                         │    └── NO  → run preRegisteredHandler
+                         │              ├── block → history.go(-delta) to restore
+                         │              └── allow → adopt the landed entry, allow
 ```
 
 ---
