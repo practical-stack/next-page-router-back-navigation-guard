@@ -5,8 +5,9 @@
  * This module handles the core popstate event interception logic.
  *
  * Key Concepts:
- * - Session Token: A unique identifier for the current browser session.
- *   Used to detect page refresh or external domain entry (token mismatch).
+ * - Session Token: A unique identifier for the current browser session. The token is
+ *   recovered across a refresh (captured at module-eval), so a refresh stays in-session;
+ *   a token mismatch instead marks a genuine session boundary (missing/cross-session entry).
  * - History Index: Tracks position in the history stack to calculate navigation delta.
  * - Interception Flow: Restore URL first, run handlers, then allow/block navigation.
  *
@@ -84,7 +85,7 @@ export function useInterceptPopState({
  *
  * The handler distinguishes between three scenarios:
  * 1. Already confirmed navigation - Allow immediately (handler already approved)
- * 2. Session token mismatch - Page was refreshed or entered from external domain
+ * 2. Session token mismatch - Genuine session boundary (missing/cross-session entry; not a normal refresh)
  * 3. Internal navigation - Normal back/forward within the app
  */
 function createPopstateHandler(
@@ -94,6 +95,37 @@ function createPopstateHandler(
   const renderedStateContext = createRenderedStateContext();
   const interceptionStateContext = createInterceptionStateContext();
   const handlerContext: HandlerContext = { handlerMap, preRegisteredHandler };
+
+  // Runs the pending handler exactly once after a back-navigation URL restore.
+  //
+  // It can be triggered from two places: the normal delta===0 follow-up popstate, or
+  // the refresh-safe fallback below. After a refresh, Next.js does NOT invoke
+  // beforePopState for the synthetic history.go() restore, so the follow-up popstate
+  // never reaches us and the fallback is what fires. (Root cause — Next's isSsr
+  // initial-load guard in onPopState — is documented in full, with Next.js v14.2.0
+  // source links, at the back-navigation branch that schedules the fallback below.)
+  // The pendingHandlerExecution flag is cleared synchronously here, so whichever
+  // trigger runs first wins and the other becomes a no-op — guaranteeing exactly-once
+  // execution.
+  const runPendingHandlerOnce = (): void => {
+    const { pendingHandlerExecution, pendingHistoryIndexDelta } =
+      interceptionStateContext.getState();
+    if (!pendingHandlerExecution) return;
+    interceptionStateContext.setState({ pendingHandlerExecution: false });
+
+    (async () => {
+      const destinationPath = location.pathname + location.search;
+      const shouldAllowNavigation =
+        await runHandlerChainAndGetShouldAllowNavigation(handlerContext, destinationPath);
+      if (shouldAllowNavigation) {
+        if (DEBUG) console.log(`[Internal] Handler confirmed`);
+        interceptionStateContext.setState({ isNavigationConfirmed: true });
+        window.history.go(pendingHistoryIndexDelta);
+      } else {
+        if (DEBUG) console.log(`[Internal] Handler blocked`);
+      }
+    })();
+  };
 
   return (historyState: NextHistoryState = {}): boolean => {
     const { nextSessionToken, nextHistoryIndex } = parseHistoryState(historyState);
@@ -113,26 +145,37 @@ function createPopstateHandler(
     if (interceptionStateContext.getState().isNavigationConfirmed) {
       if (DEBUG) console.log(`[Confirmed] Navigation confirmed by handler`);
       interceptionStateContext.setState({ isNavigationConfirmed: false });
-      renderedStateContext.setStateAndSyncToHistory(
+      // setState (no history sync) is sufficient here. We arrived at this entry via our
+      // own history.go()/back(), so its history.state already holds the correct
+      // {index, token}. computeNextRenderedState() simply re-derives those same values
+      // from what we just parsed off this entry, so a replaceState would only write back
+      // identical data (idempotent). Only the in-memory pointer needs to move.
+      // (Verified: switching this from setStateAndSyncToHistory to setState keeps all E2E green.)
+      renderedStateContext.setState(
         computeNextRenderedState(nextSessionToken, nextHistoryIndex)
       );
       return true;
     }
 
     // ========================================
-    // Session Token Mismatch (Back After Refresh)
+    // Session Token Mismatch (Genuine Session Boundary)
     // ========================================
-    // After a page refresh, Token Mismatch ALWAYS happens.
-    // Next.js Pages Router overwrites `history.state` on initialization, so the
-    // previous session's token cannot be recovered. initializeHistoryStateSyncOnce()
-    // always starts with a fresh token, which then mismatches the token stored on
-    // older history entries.
+    // Safety net / graceful-degradation path — NOT reached in a normal SPA flow (Provider in
+    // _app, every entry stamped, refresh restores the token). It exists for the edge cases
+    // below; removing it would make a missing/foreign token be mishandled as internal
+    // navigation with a meaningless index delta.
     //
-    // Because the previous session's historyIndex is no longer trustworthy, we
-    // cannot tell back from forward navigation in this branch. We assume back
-    // and restore the URL with history.go(1). This means forward navigation
-    // after a refresh is also misdetected as back navigation. That is a
-    // structural limitation of Pages Router — see docs/07-limitation.md.
+    // A normal page refresh no longer reaches this branch. initializeHistoryStateSyncOnce()
+    // recovers the previous session token (captured at module-evaluation time, before Next
+    // overwrites history.state), so the refreshed entry rejoins its original session and is
+    // handled as internal navigation by index.
+    //
+    // This branch now fires only at a genuine session boundary: the landing entry has no
+    // metadata (it predates the library or was written externally), or it carries a token
+    // from a different session (e.g. when there was no token to recover at module-eval and a
+    // fresh session was started). Across such a boundary the previous session's historyIndex
+    // is not comparable, so we cannot tell back from forward — we assume back and restore the
+    // URL with history.go(1).
     //
     // Note: back navigation from an external domain does not fire a popstate
     // in this document's context and is therefore not handled here.
@@ -162,7 +205,7 @@ function createPopstateHandler(
       // with history.go(1). Without this, the browser URL changes to the previous
       // page while Next.js still renders the current page, causing desync.
       //
-      // Example scenario (once: true handler after refresh):
+      // Example scenario (once: true handler at a session boundary):
       // 1. First back: handler runs, blocks, gets deleted (once: true)
       // 2. Second back: no handlers, preRegisteredHandler closes modal, blocks
       //    → Without history.go(1), browser URL is now at home page
@@ -174,7 +217,14 @@ function createPopstateHandler(
           window.history.go(1);
           return false;
         }
-        renderedStateContext.setStateAndSyncToHistory(
+        // setState (no history sync) is sufficient here. This pass-through path did NOT
+        // call history.go(1), so the browser is sitting on the entry the back landed on,
+        // and computeNextRenderedState() re-derives that same entry's parsed {index, token}.
+        // A replaceState would only write identical data back (idempotent); the meaningful
+        // change is the in-memory pointer adopting this entry's (older) session token so
+        // subsequent popstates stop reporting a mismatch.
+        // (Verified: switching this from setStateAndSyncToHistory to setState keeps all E2E green.)
+        renderedStateContext.setState(
           computeNextRenderedState(nextSessionToken, nextHistoryIndex)
         );
         return true;
@@ -185,9 +235,9 @@ function createPopstateHandler(
       window.history.go(1);
 
       // NOTE: We cannot use the pendingHandlerExecution pattern (waiting for historyIndexDelta === 0)
-      // here because after refresh, ALL history entries have the old session token. Every subsequent
-      // popstate will still trigger isSessionTokenMismatch, making delta-based detection unreliable.
-      // Instead, we use rAF + setTimeout to wait for browser to settle after history.go(1).
+      // here because across a session boundary the historyIndex is not comparable, so delta-based
+      // detection of when history.go(1) completes is unreliable. Instead, we use rAF + setTimeout to
+      // wait for the browser to settle after history.go(1).
       // @see https://developer.mozilla.org/en-US/docs/Web/API/History/go
       requestAnimationFrame(() => {
         setTimeout(async () => {
@@ -221,26 +271,14 @@ function createPopstateHandler(
     // MDN: "This method is asynchronous. Add a listener for the popstate event
     // in order to determine when the navigation has completed."
     if (historyIndexDelta === 0) {
-      const { pendingHandlerExecution, pendingHistoryIndexDelta } = interceptionStateContext.getState();
-      
+      const { pendingHandlerExecution } = interceptionStateContext.getState();
+
       if (pendingHandlerExecution) {
         if (DEBUG) console.log(`[Internal] history.go() completed, running pending handler`);
-        interceptionStateContext.setState({ pendingHandlerExecution: false });
-        
-        (async () => {
-          const destinationPath = location.pathname + location.search;
-          const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(handlerContext, destinationPath);
-          if (shouldAllowNavigation) {
-            if (DEBUG) console.log(`[Internal] Handler confirmed`);
-            interceptionStateContext.setState({ isNavigationConfirmed: true });
-            window.history.go(pendingHistoryIndexDelta);
-          } else {
-            if (DEBUG) console.log(`[Internal] Handler blocked`);
-          }
-        })();
+        runPendingHandlerOnce();
         return false;
       }
-      
+
       if (DEBUG) console.log(`[Internal] Ignoring (historyIndexDelta is 0)`);
       interceptionStateContext.setState({ isRestoringUrl: false });
       return false;
@@ -275,14 +313,61 @@ function createPopstateHandler(
       return true;
     }
 
-    // Restore URL first, then wait for popstate (delta=0) to run handlers.
-    // This follows MDN's recommendation for detecting history.go() completion.
+    // Restore URL first, then run the handler once the restore completes.
+    // Normally the delta===0 follow-up popstate (via beforePopState) signals
+    // completion. But after a refresh, Next.js does NOT invoke beforePopState for our
+    // synthetic history.go() restore, so that follow-up never arrives.
+    //
+    // Root cause (Next.js Pages Router; logic unchanged from v14.2.0 through v16.2.9,
+    // the latest stable verified — only line numbers differ between versions):
+    // The router's internal onPopState reaches our beforePopState callback (this._bps)
+    // only at the very end, AFTER an "initial load" guard:
+    //
+    //     // Make sure we don't re-render on initial load,
+    //     // can be caused by navigating back from an external site
+    //     if (this.isSsr && as === addBasePath(this.asPath) &&
+    //         pathname === addBasePath(this.pathname)) { return }   // returns BEFORE _bps
+    //     ...
+    //     if (this._bps && !this._bps(state)) { return }            // our callback
+    //
+    // `this.isSsr` starts true on every page load (incl. refresh) and is only flipped to
+    // false inside change(), which runs on a client-side navigation. After a refresh the
+    // user's first action is Back: we block it (return false), so change() never runs and
+    // isSsr stays true. Our history.go() restore then lands back on the SAME url Next.js is
+    // rendering, so `as === this.asPath` && isSsr === true → the guard returns early and
+    // _bps (our handler) is never called. Without a refresh, the page was reached via
+    // client navigation (isSsr already false), the guard is skipped, and the normal
+    // delta===0 popstate works — which is why the fallback only matters post-refresh.
+    //
+    // Next.js v14.2.0 source (packages/next/src/shared/lib/router/router.ts):
+    //   onPopState:            https://github.com/vercel/next.js/blob/v14.2.0/packages/next/src/shared/lib/router/router.ts#L898
+    //   isSsr initial-load guard: https://github.com/vercel/next.js/blob/v14.2.0/packages/next/src/shared/lib/router/router.ts#L969-L977
+    //   _bps (beforePopState):    https://github.com/vercel/next.js/blob/v14.2.0/packages/next/src/shared/lib/router/router.ts#L981
+    //   this.isSsr = true (init): https://github.com/vercel/next.js/blob/v14.2.0/packages/next/src/shared/lib/router/router.ts#L819
+    //   this.isSsr = false (change): https://github.com/vercel/next.js/blob/v14.2.0/packages/next/src/shared/lib/router/router.ts#L1155
+    // Same logic in latest stable v16.2.9 (line numbers shifted):
+    //   onPopState L900 · isSsr guard L971-L979 · _bps L983 · isSsr=true L821 · isSsr=false L1243
+    //   https://github.com/vercel/next.js/blob/v16.2.9/packages/next/src/shared/lib/router/router.ts#L971-L979
+    //
+    // We therefore also schedule a refresh-safe fallback (rAF + setTimeout, per MDN's
+    // guidance for detecting history.go() completion) that bypasses Next's popstate path
+    // entirely. runPendingHandlerOnce() is idempotent via the pendingHandlerExecution flag,
+    // so whichever trigger fires first wins.
+    // @see https://developer.mozilla.org/en-US/docs/Web/API/History/go
     if (DEBUG) console.log(`[Internal] Restoring URL with history.go(${-historyIndexDelta})`);
     interceptionStateContext.setState({
       pendingHandlerExecution: true,
       pendingHistoryIndexDelta: historyIndexDelta,
     });
     window.history.go(-historyIndexDelta);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        if (interceptionStateContext.getState().pendingHandlerExecution) {
+          if (DEBUG) console.log(`[Internal] Follow-up popstate did not arrive (post-refresh); running handler via fallback`);
+          runPendingHandlerOnce();
+        }
+      }, 0);
+    });
     return false;
   };
 }

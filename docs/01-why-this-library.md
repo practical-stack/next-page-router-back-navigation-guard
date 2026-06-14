@@ -11,7 +11,7 @@ This document explains the fundamental problems with browser History API and Nex
 3. [The Gap: What Next.js Doesn't Provide](#the-gap-what-nextjs-doesnt-provide)
 4. [Problem 1: URL Restoration After Blocking](#problem-1-url-restoration-after-blocking)
 5. [Problem 2: Detecting Back vs Forward Navigation](#problem-2-detecting-back-vs-forward-navigation)
-6. [Problem 3: Refresh and External Entry Detection](#problem-3-refresh-and-external-entry-detection)
+6. [Problem 3: Refresh and Session Token Recovery](#problem-3-refresh-and-session-token-recovery)
 7. [Summary](#summary)
 
 ---
@@ -264,20 +264,20 @@ Even when `beforePopState` returns `false`:
 
 We restore the URL using `history.go()`:
 
-**Token Mismatch (refresh/external entry):**
+**Token Mismatch (genuine session boundary — external entry, no metadata):**
 ```typescript
 window.history.go(1);  // Always 1 step forward
 ```
 
-**Internal navigation:**
+**Internal navigation (including normal back navigation after refresh):**
 ```typescript
 const delta = nextIndex - currentIndex;  // e.g., -1, -2, -3
 window.history.go(-delta);  // Restore by calculated amount
 ```
 
 Why different approaches?
-- Token mismatch: Always 1 step back from current position
-- Internal: User might jump multiple steps (browser history dropdown)
+- Token mismatch: Genuine session boundary — always exactly 1 step back from current position
+- Internal: User might jump multiple steps (browser history dropdown); after refresh, the refreshed entry rejoins its original session so index-based calculation applies here too
 
 ---
 
@@ -353,40 +353,25 @@ if (delta < 0) {
 }
 ```
 
+Because the session token is now recovered at module-evaluation time after a refresh (see Problem 3), the refreshed entry rejoins its original session and this same index-based delta calculation correctly distinguishes forward from back navigation after a refresh too.
+
 ---
 
-## Problem 3: Refresh Creates a New Session Boundary
+## Problem 3: Refresh and Session Token Recovery
 
-### What Actually Breaks After Refresh
+### How the Token Is Recovered After Refresh
 
-The tricky case is not "restoring the old token." That part is impossible.
+After a refresh, the library recovers the previous session token by reading `history.state` at module-evaluation time — during bundle execution, before Next.js router hydration overwrites `history.state`. (The browser preserves the current entry's `history.state` across a reload until roughly the `load` event; Next.js overwrites it only later, during hydration, which is when the provider mounts — so a read at provider-mount time was too late, but a module-eval read still sees the old token.) Because the refreshed entry rejoins its original session, after-refresh navigation is tracked by index like normal navigation: forward is correctly detected as forward (delta > 0, allowed) and back as back (delta < 0, guarded).
 
-After a page refresh, Next.js Pages Router overwrites `history.state` during its
-own initialization, before our provider mounts. That destroys our access to the
-previous session token for the current entry.
+This is implemented in `history-augmentation.ts`: `__next_session_token` and `__next_navigation_stack_index` are read from `history.state` at module-evaluation time, and `initializeHistoryStateSyncOnce()` restores `{token, index}` if captured, otherwise generates a fresh token for a genuine new session.
 
-JavaScript state is lost in these scenarios:
+### The rAF + setTimeout Fallback for After-Refresh Back Navigation
 
-**1. First visit to the app:**
-- No previous history in our app
-- No index information exists
+After a refresh, Next.js does not invoke `beforePopState` for the library's synthetic `history.go()` restore, so the normal `delta === 0` follow-up popstate never arrives. The internal-back path therefore also schedules a `requestAnimationFrame` + `setTimeout` fallback so the handler still runs, guarded by a flag for exactly-once execution.
 
-**2. Page refresh:**
-- JavaScript memory cleared
-- Next.js replaces the current `history.state`
-- The previous session token for the current entry is no longer recoverable
+### Solution: Token-Based Session Boundary Detection (for Genuine Boundaries)
 
-### Solution: Token-Based Session Boundary Detection
-
-We generate a unique token per session:
-
-```typescript
-export function newToken() {
-  return Math.random().toString(36).substring(2);
-}
-```
-
-Token is injected alongside index:
+Token injection still happens alongside index:
 
 ```typescript
 const modifiedState = {
@@ -396,42 +381,41 @@ const modifiedState = {
 };
 ```
 
-On popstate, we detect when the next entry belongs to a different session:
+On popstate, the token-mismatch check now handles only genuine session boundaries — entries that carry no metadata, or a token from a different session:
 
 ```typescript
 const token = nextState.__next_session_token;
 
 const isTokenMismatch =
-  !token ||  // Missing session metadata
-  token !== renderedStateRef.current.token;  // Mismatch (common after refresh)
+  !token ||  // Missing session metadata (first visit, pre-library entries)
+  token !== renderedStateRef.current.token;  // Genuine different session
 ```
+
+The token-mismatch path still exists, but it is no longer the normal after-refresh path. It now handles only genuine session boundaries — entries that carry no metadata, or a token from a different session.
 
 ### Scenario Examples
 
-**After refresh:**
+**After refresh (token recovered — same session):**
 ```
-Before: currentToken = "abc123", history.state.token = "abc123" ✓
-After:  currentToken = "xyz789" (new), history.state.token = "abc123" (old)
-→ Token mismatch detected!
+module-eval reads: history.state.__next_session_token = "abc123"
+                   history.state.__next_navigation_stack_index = 2
+initializeHistoryStateSyncOnce() restores token = "abc123", index = 2
+→ Refreshed entry rejoins session "abc123"
+→ Navigation tracked by index (forward/back correctly detected)
+```
+
+**First visit or genuine new session (no metadata):**
+```
+module-eval reads: history.state has no __next_session_token
+initializeHistoryStateSyncOnce() generates fresh token = "xyz789"
+→ Older entries without token → isTokenMismatch = true → history.go(1)
 ```
 
 **Normal internal navigation:**
 ```
 currentToken = "abc123", nextState.token = "abc123"
-→ Token matches ✓ Normal handling.
+→ Token matches ✓ Normal index-based handling.
 ```
-
-### Why the Old Token Cannot Be Restored
-
-The sequence on refresh is:
-
-1. Browser restores the existing `history.state`
-2. Next.js Pages Router initializes and calls `replaceState(...)`
-3. Our provider mounts afterward and sees only Next.js's new state
-
-So after refresh, we cannot recover the previous session token. The library does
-not restore that token; it generates a new token for the new session and treats
-older history entries as belonging to a different session.
 
 ### Important Scope Limit: External Domain Back Is Not Intercepted
 
@@ -447,7 +431,7 @@ for us to intercept while your app is gone.
 |---------|-------|----------|
 | **URL Restoration** | Browser changes URL before JS runs | `history.go()` to restore URL |
 | **Direction Detection** | popstate fires for both back/forward | Patch pushState to inject index, calculate delta |
-| **Session Boundary Detection** | Previous session token cannot be recovered after refresh | Generate a new token and detect mismatch |
+| **Session Boundary Detection** | History entries from before the library was loaded carry no metadata or a different session token | Recover session token at module-eval time (before Next.js hydration overwrites `history.state`); token-mismatch path handles only genuine boundaries |
 
 Next.js Pages Router provides `beforePopState` to intercept navigation, but leaves the hard problems to you. This library solves them.
 

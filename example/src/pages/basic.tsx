@@ -37,6 +37,8 @@ export default function BasicTest() {
         <Link href="/">Back to Home</Link>
         {" | "}
         <Link href="/nohandler">Go to No Handler</Link>
+        {" | "}
+        <Link href="/enable" data-testid="go-to-enable">Go to Enable Option</Link>
       </div>
 
       <div style={{ marginTop: 20 }}>

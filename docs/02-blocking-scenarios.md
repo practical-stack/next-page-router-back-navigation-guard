@@ -114,10 +114,12 @@ This happens when:
 
 ## Scenario 4: Token Mismatch
 
-Covers: **Page refresh** and **External domain entry**
+Covers: **Genuine session boundaries** — entries that carry no library metadata, or a token from a different session
+
+> **Note (post token-restoration change)**: A normal page refresh no longer reaches this path. At module-evaluation time (before Next.js hydration), `history-augmentation.ts` reads the pre-existing `history.state` and restores the session token + index into the current entry. The refreshed page therefore rejoins its original session, and back navigation after a refresh is handled as internal navigation (Scenarios 1/2/6) by index delta. Scenario 4 is now reserved for genuine session boundaries: history entries that were written without library metadata, or that carry a token from an entirely different session.
 
 **Situation A**: Our site → Google → Back to our site
-**Situation B**: Page refresh then back button
+**Situation B**: History entries with no `__next_session_token` (e.g., entries predating the library, or a genuinely different session)
 
 ```
 Back button clicked
@@ -166,13 +168,13 @@ isNavigationConfirmed flag check
 - Instead, use `history.go(1)` to go forward (since we came from back)
 
 **Token Mismatch Detection**:
-- `history.state` has no `__next_session_token`
-- Or token doesn't match current session (common after refresh)
+- `history.state` has no `__next_session_token` (entry predates the library or was written externally)
+- Or token belongs to a genuinely different session (not the normal-refresh case, which is now handled as internal navigation)
 
-**Important technical limit**:
-- This flow does **not** restore the previous session token
-- After refresh, Next.js Pages Router overwrites the current `history.state`
-- The library creates a new current-session token and treats older entries as a different session
+**Session token restoration (normal refresh)**:
+- `history-augmentation.ts` captures `history.state` at module-evaluation time, before Next.js hydration can overwrite it
+- The session token and history index from the pre-refresh state are restored into the current entry
+- After a normal refresh the current entry rejoins its original session, so the token **matches** and back navigation proceeds via the internal-back path (Scenario 6)
 
 **isNavigationConfirmed Flag**:
 - When handler confirms navigation (returns true), we call `history.back()`
@@ -180,18 +182,18 @@ isNavigationConfirmed flag check
 - The `isNavigationConfirmed` flag ensures this subsequent popstate is allowed through
 - **Critical**: Flag must be set BEFORE calling `history.back()`, not after
 
-**Why `requestAnimationFrame + setTimeout` instead of `pendingHandlerExecution` pattern?**
+**Why `requestAnimationFrame + setTimeout` for the handler callback?**
 
-For internal navigation (Scenario 6), we use `pendingHandlerExecution` and wait for `historyIndexDelta === 0` to detect `history.go()` completion. But for token mismatch, this approach **doesn't work**:
+Both the token-mismatch path and the internal-back path (Scenario 6) rely on a `requestAnimationFrame(() => setTimeout(..., 0))` fallback to run the handler. The root cause is the same in both cases:
 
-- After page refresh, ALL history entries have the **old session token**
-- Every subsequent popstate will still trigger `isSessionTokenMismatch`
-- We cannot use delta-based detection because the `historyIndex` tracking is unreliable after refresh
+- After a page refresh, Next.js does **not** call `beforePopState` for the synthetic `history.go()` restore the library issues
+- That means the `delta === 0` follow-up popstate — which normally signals that `history.go()` has completed — never arrives
+- Without that signal, the `pendingHandlerExecution` flag would never be consumed and the handler would never run
 
-Instead, we use `requestAnimationFrame(() => setTimeout(..., 0))` to wait for the browser to settle:
-1. `requestAnimationFrame` ensures the browser has completed rendering
-2. `setTimeout(0)` ensures pending microtasks and events are processed
-3. This is more reliable than `setTimeout(0)` alone for async history navigation
+The rAF+setTimeout fallback fires after the browser has settled and runs the handler exactly once (the `pendingHandlerExecution` flag ensures it cannot fire twice even if the `delta === 0` popstate also arrives):
+1. `requestAnimationFrame` — defers until after the current paint, after browser history has settled
+2. `setTimeout(0)` — drains any remaining microtasks and queued events
+3. `pendingHandlerExecution` flag — guarantees exactly-once execution regardless of which path (popstate or fallback) fires first
 
 **External domain entry is not an interceptable case**:
 
@@ -350,6 +352,8 @@ We wait for `history.go()` to complete by listening for the popstate event with 
         → Call history.go(pendingHistoryIndexDelta) to navigate back
 ```
 
+**After a page refresh, the `delta = 0` popstate does not arrive.** Next.js does not invoke `beforePopState` for the library's synthetic `history.go()` restore after a reload, so step 5 above never fires. To cover this case, a `requestAnimationFrame(() => setTimeout(..., 0))` fallback is also scheduled at step 3. It runs the handler exactly once via the same `pendingHandlerExecution` flag — whichever path (popstate or fallback) fires first consumes the flag and the other is a no-op.
+
 > **MDN Reference**: "This method is asynchronous. Add a listener for the popstate event in order to determine when the navigation has completed."
 > — [MDN Web Docs: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
 
@@ -431,7 +435,7 @@ First back → handler runs, shows dialog, blocks
     │         handler deleted (once: true)
     │
     ▼
-Second back → Token mismatch, handlerMap is EMPTY
+Second back → internal navigation (index delta), handlerMap is EMPTY
     │
     ▼
 preRegisteredHandler runs (closes modal) → blocks
@@ -440,7 +444,7 @@ preRegisteredHandler runs (closes modal) → blocks
 URL restoration: history.go(1) ← CRITICAL!
     │
     ▼
-Third back → Token mismatch, no handlers, no overlay
+Third back → internal navigation, no handlers, no overlay
     │
     ▼
 Allow navigation → Navigate to previous page

@@ -114,10 +114,12 @@ handler callback executed
 
 ## 시나리오 4: Token Mismatch
 
-**새로고침** 및 **외부 도메인 진입** 처리
+**진정한 세션 경계** 처리 — 라이브러리 메타데이터가 없는 항목, 또는 다른 세션의 토큰을 가진 항목
+
+> **참고 (토큰 복원 변경 이후)**: 일반적인 페이지 새로고침은 더 이상 이 경로를 거치지 않습니다. `history-augmentation.ts`가 모듈 평가 시점(Next.js 하이드레이션이 덮어쓰기 전)에 `history.state`를 읽어 세션 토큰과 index를 현재 항목에 복원합니다. 따라서 새로고침된 페이지는 원래 세션에 다시 합류하고, 새로고침 후 뒤로가기는 index delta를 기반으로 내부 네비게이션(시나리오 1/2/6)으로 처리됩니다. 시나리오 4는 이제 진정한 세션 경계에만 해당합니다: 라이브러리 메타데이터 없이 작성된 히스토리 항목, 또는 완전히 다른 세션의 토큰을 가진 항목.
 
 **상황 A**: 내 사이트 → 구글 → 뒤로가기로 내 사이트 복귀
-**상황 B**: 페이지 새로고침 후 뒤로가기
+**상황 B**: `__next_session_token`이 없는 히스토리 항목 (라이브러리 도입 이전 항목, 또는 완전히 다른 세션)
 
 ```
 Back button clicked
@@ -166,13 +168,13 @@ isNavigationConfirmed 플래그 확인
 - 대신 `history.go(1)`로 앞으로 이동 (뒤로가기로 왔으므로)
 
 **Token Mismatch 감지 조건**:
-- `history.state`에 `__next_session_token` 없음
-- 또는 token이 현재 세션과 불일치 (새로고침 후 흔함)
+- `history.state`에 `__next_session_token` 없음 (라이브러리 도입 전 항목이거나 외부에서 작성된 항목)
+- 또는 token이 완전히 다른 세션에 속함 (일반적인 새로고침 후 케이스는 이제 내부 네비게이션으로 처리됨)
 
-**중요한 기술적 한계**:
-- 이 흐름은 이전 세션 토큰을 복원하는 것이 아님
-- 새로고침 후에는 Next.js Pages Router가 현재 `history.state`를 덮어씀
-- 라이브러리는 새 현재 세션 토큰을 만들고, 이전 entry들을 다른 세션으로 취급함
+**세션 토큰 복원 (일반적인 새로고침)**:
+- `history-augmentation.ts`가 모듈 평가 시점에 `history.state`를 캡처하여 Next.js 하이드레이션이 덮어쓰기 전에 처리함
+- 새로고침 이전 상태의 세션 토큰과 히스토리 index가 현재 항목에 복원됨
+- 일반적인 새로고침 후 현재 항목은 원래 세션에 다시 합류하므로 token이 **일치**하고, 뒤로가기는 내부 경로(시나리오 6)로 처리됨
 
 **isNavigationConfirmed 플래그**:
 - handler가 네비게이션을 허용하면 (true 반환) `history.back()` 호출
@@ -180,18 +182,18 @@ isNavigationConfirmed 플래그 확인
 - `isNavigationConfirmed` 플래그로 이 후속 popstate를 허용 처리
 - **중요**: 플래그는 반드시 `history.back()` 호출 전에 설정해야 함
 
-**왜 `pendingHandlerExecution` 패턴 대신 `requestAnimationFrame + setTimeout`을 사용하는가?**
+**핸들러 콜백에 `requestAnimationFrame + setTimeout`을 사용하는 이유?**
 
-내부 네비게이션(시나리오 6)에서는 `pendingHandlerExecution`과 `historyIndexDelta === 0`을 사용해 `history.go()` 완료를 감지합니다. 하지만 token mismatch에서는 이 방식이 **동작하지 않습니다**:
+token mismatch 경로와 내부 뒤로가기 경로(시나리오 6) 모두 `requestAnimationFrame(() => setTimeout(..., 0))` 폴백에 의존해 핸들러를 실행합니다. 두 경우의 근본 원인은 동일합니다:
 
-- 페이지 새로고침 후, 모든 history entry가 **이전 세션 토큰**을 가짐
-- 모든 후속 popstate가 여전히 `isSessionTokenMismatch`를 발생시킴
-- 새로고침 후 `historyIndex` 추적이 신뢰할 수 없어 delta 기반 감지 불가
+- 페이지 새로고침 후, Next.js는 라이브러리가 발행하는 합성 `history.go()` 복원에 대해 `beforePopState`를 **호출하지 않음**
+- 따라서 `history.go()` 완료를 알리는 `delta === 0` 후속 popstate가 도착하지 않음
+- 이 신호 없이는 `pendingHandlerExecution` 플래그가 소비되지 않아 핸들러가 실행되지 않음
 
-대신 `requestAnimationFrame(() => setTimeout(..., 0))`으로 브라우저 안정화를 대기합니다:
-1. `requestAnimationFrame` - 브라우저 렌더링 완료 보장
-2. `setTimeout(0)` - 대기 중인 microtask와 이벤트 처리 완료 보장
-3. `setTimeout(0)` 단독 사용보다 비동기 history 네비게이션에 더 안정적
+rAF+setTimeout 폴백은 브라우저가 안정화된 후 핸들러를 정확히 한 번 실행합니다(`pendingHandlerExecution` 플래그로 이중 실행을 방지):
+1. `requestAnimationFrame` — 현재 페인트 이후, 브라우저 히스토리가 안정화된 후로 지연
+2. `setTimeout(0)` — 남은 microtask와 대기 중인 이벤트 처리 완료
+3. `pendingHandlerExecution` 플래그 — popstate와 폴백 중 어느 쪽이 먼저 실행되든 정확히 한 번만 실행 보장
 
 **외부 도메인 진입은 인터셉트 가능한 케이스가 아닙니다**:
 
@@ -350,6 +352,8 @@ useRegisterBackNavigationHandler(() => {
         → history.go(pendingHistoryIndexDelta) 호출하여 뒤로 이동
 ```
 
+**페이지 새로고침 후에는 `delta = 0` popstate가 도착하지 않습니다.** 새로고침 이후 Next.js는 라이브러리의 합성 `history.go()` 복원에 대해 `beforePopState`를 호출하지 않으므로, 위의 5단계가 실행되지 않습니다. 이 경우를 처리하기 위해 3단계에서 `requestAnimationFrame(() => setTimeout(..., 0))` 폴백도 함께 예약됩니다. 동일한 `pendingHandlerExecution` 플래그를 통해 핸들러를 정확히 한 번 실행하며, popstate와 폴백 중 먼저 실행된 쪽이 플래그를 소비하면 나머지는 no-op이 됩니다.
+
 > **MDN 참조**: "이 메서드는 비동기입니다. popstate 이벤트 리스너를 추가하여 네비게이션 완료 시점을 알 수 있습니다."
 > — [MDN Web Docs: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
 
@@ -431,7 +435,7 @@ once: true 핸들러가 있는 페이지 새로고침
     │                핸들러 삭제됨 (once: true)
     │
     ▼
-두 번째 뒤로가기 → Token mismatch, handlerMap 비어있음
+두 번째 뒤로가기 → 내부 네비게이션 (index delta), handlerMap 비어있음
     │
     ▼
 preRegisteredHandler 실행 (모달 닫음) → 차단
@@ -440,7 +444,7 @@ preRegisteredHandler 실행 (모달 닫음) → 차단
 URL 복원: history.go(1) ← 핵심!
     │
     ▼
-세 번째 뒤로가기 → Token mismatch, 핸들러 없음, 오버레이 없음
+세 번째 뒤로가기 → 내부 네비게이션, 핸들러 없음, 오버레이 없음
     │
     ▼
 네비게이션 허용 → 이전 페이지로 이동
