@@ -329,11 +329,12 @@ We patch `history.pushState` to inject index into every state:
 
 ```typescript
 window.history.pushState = function (state, unused, url) {
-  ++renderedStateRef.current.index;
+  const current = getRenderedHistoryEntryMetadata();
+  const next = { ...current, historyIndex: current.historyIndex + 1 };
 
   const modifiedState = {
     ...state,
-    __next_navigation_stack_index: renderedStateRef.current.index,
+    __next_navigation_stack_index: next.historyIndex,
   };
 
   originalPushState.call(this, modifiedState, unused, url);
@@ -344,7 +345,8 @@ On popstate, we calculate delta to determine direction:
 
 ```typescript
 const nextIndex = Number(nextState.__next_navigation_stack_index) || 0;
-const delta = nextIndex - renderedStateRef.current.index;
+const current = getRenderedHistoryEntryMetadata();
+const delta = nextIndex - current.historyIndex;
 
 if (delta < 0) {
   // Back navigation → Block
@@ -376,8 +378,8 @@ Token injection still happens alongside index:
 ```typescript
 const modifiedState = {
   ...state,
-  __next_navigation_stack_index: renderedStateRef.current.index,
-  __next_session_token: renderedStateRef.current.token,
+  __next_navigation_stack_index: next.historyIndex,
+  __next_session_token: next.sessionToken,
 };
 ```
 
@@ -385,10 +387,11 @@ On popstate, the token-mismatch check now handles only genuine session boundarie
 
 ```typescript
 const token = nextState.__next_session_token;
+const current = getRenderedHistoryEntryMetadata();
 
-const isTokenMismatch =
+const isSessionBoundary =
   !token ||  // Missing session metadata (first visit, pre-library entries)
-  token !== renderedStateRef.current.token;  // Genuine different session
+  token !== current.sessionToken;  // Genuine different session
 ```
 
 The token-mismatch path still exists, but it is no longer the normal after-refresh path. It now handles only genuine session boundaries — entries that carry no metadata, or a token from a different session.
@@ -442,4 +445,7 @@ Next.js Pages Router provides `beforePopState` to intercept navigation, but leav
 | File | Purpose |
 |------|---------|
 | `src/useInterceptPopState.helper/history-augmentation.ts` | History API patching (index/token injection) |
-| `src/useInterceptPopState.ts` | Popstate interception and handling |
+| `src/useInterceptPopState.ts` | Connect the interceptor to Next.js `beforePopState` |
+| `src/useInterceptPopState.helper/popstate-interceptor.ts` | Popstate classification and restore/replay flow |
+| `src/useInterceptPopState.helper/pending-navigation.ts` | Pending navigation state during URL restoration |
+| `src/useInterceptPopState.helper/rendered-history-entry-metadata-store.ts` | Rendered history-entry metadata store |

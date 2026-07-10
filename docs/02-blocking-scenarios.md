@@ -48,13 +48,20 @@ We use Next.js Pages Router's `beforePopState` callback to intercept back/forwar
 popstate event fired
     │
     ▼
+Store delta -1 and call history.go(1)
+to restore Page2's URL
+    │
+    ▼
+Restore popstate arrives with delta = 0
+(or the completion fallback runs)
+    │
+    ▼
 handler callback executed (e.g., confirm dialog)
     │
-    ├── User selects "Cancel"
-    │     └→ history.go(1) called → Stay on Page2
-    │
-    └── User selects "OK"
-          └→ popstate re-dispatched → Navigate to Page1
+    ├── User selects "Cancel" → Stay on restored Page2
+    └── User selects "OK" → history.go(-1)
+                              → confirmed popstate passes
+                              → Navigate to Page1
 ```
 
 | Item | Value |
@@ -99,10 +106,14 @@ Right-click back button → Select "Page1" from history menu
 delta = 0 - 3 = -3
     │
     ▼
-handler callback executed
+Store delta -3 and call history.go(3)
+to restore Page4's URL
     │
-    ├── Cancel → history.go(3) → Stay on Page4
-    └── OK → Navigate to Page1
+    ▼
+After restoration completes, execute handler callback
+    │
+    ├── Cancel → Stay on Page4
+    └── OK → history.go(-3) → Navigate to Page1
 ```
 
 This happens when:
@@ -146,15 +157,18 @@ isNavigationConfirmed flag check
     history.go(1) called → URL restored (forward)
           │
           ▼
-    requestAnimationFrame + setTimeout: async handler callback execution
+    matching-token restore popstate reaches delta === 0
+    (or requestAnimationFrame + setTimeout fallback runs)
+          │
+          ▼
+    consume pending navigation and execute async handler callback
           │
           ├── Cancel (handler returns false)
           │     └→ Stay on current page
           │
           └── OK (handler returns true)
-                └→ Set new token/index
                 └→ isNavigationConfirmed = true  ← Critical: set BEFORE back()
-                └→ window.history.back() re-called
+                └→ window.history.go(-1) re-called
                 └→ Next popstate sees isNavigationConfirmed=true
                 └→ Navigate to previous page
 ```
@@ -174,10 +188,10 @@ isNavigationConfirmed flag check
 - After a normal refresh the current entry rejoins its original session, so the token **matches** and back navigation proceeds via the internal-back path (Scenario 6)
 
 **isNavigationConfirmed Flag**:
-- When handler confirms navigation (returns true), we call `history.back()`
+- When handler confirms navigation (returns true), we replay the stored delta with `history.go(-1)`
 - This triggers another popstate event, which would again detect token mismatch
 - The `isNavigationConfirmed` flag ensures this subsequent popstate is allowed through
-- **Critical**: Flag must be set BEFORE calling `history.back()`, not after
+- **Critical**: Confirmation must be set BEFORE calling `history.go(-1)`, not after
 
 **Why `requestAnimationFrame + setTimeout` for the handler callback?**
 
@@ -185,12 +199,12 @@ Both the token-mismatch path and the internal-back path (Scenario 6) rely on a `
 
 - After a page refresh, Next.js does **not** call `beforePopState` for the synthetic `history.go()` restore the library issues
 - That means the `delta === 0` follow-up popstate — which normally signals that `history.go()` has completed — never arrives
-- Without that signal, the `pendingHandlerExecution` flag would never be consumed and the handler would never run
+- Without that signal, the pending navigation would never be consumed and the handler would never run
 
-The rAF+setTimeout fallback fires after the browser has settled and runs the handler exactly once (the `pendingHandlerExecution` flag ensures it cannot fire twice even if the `delta === 0` popstate also arrives):
+The rAF+setTimeout fallback fires after the browser has settled and runs the handler exactly once (`pendingNavigation.consume()` ensures it cannot fire twice even if the `delta === 0` popstate also arrives):
 1. `requestAnimationFrame` — defers until after the current paint, after browser history has settled
 2. `setTimeout(0)` — drains any remaining microtasks and queued events
-3. `pendingHandlerExecution` flag — guarantees exactly-once execution regardless of which path (popstate or fallback) fires first
+3. `pendingNavigation.consume()` — atomically returns and clears the pending delta, so only the first completion path runs handlers
 
 **External domain entry is not an interceptable case**:
 
@@ -325,7 +339,7 @@ We wait for `history.go()` to complete by listening for the popstate event with 
 1. Back detected (delta < 0)
     │
     ▼
-2. Set pendingHandlerExecution = true, store pendingHistoryIndexDelta
+2. Set pendingNavigation = true, store pending navigation delta
     │
     ▼
 3. Call history.go(-delta) to restore URL
@@ -337,7 +351,7 @@ We wait for `history.go()` to complete by listening for the popstate event with 
 5. popstate fires with delta = 0 (restoration complete)
     │
     ▼
-6. Check pendingHandlerExecution === true
+6. Check pendingNavigation === true
     │
     ▼
 7. NOW run the handler safely
@@ -346,10 +360,10 @@ We wait for `history.go()` to complete by listening for the popstate event with 
     │   → Works correctly, history stack intact
     │
     └── Handler returns true
-        → Call history.go(pendingHistoryIndexDelta) to navigate back
+        → Call history.go(pending navigation delta) to navigate back
 ```
 
-**After a page refresh, the `delta = 0` popstate does not arrive.** Next.js does not invoke `beforePopState` for the library's synthetic `history.go()` restore after a reload, so step 5 above never fires. To cover this case, a `requestAnimationFrame(() => setTimeout(..., 0))` fallback is also scheduled at step 3. It runs the handler exactly once via the same `pendingHandlerExecution` flag — whichever path (popstate or fallback) fires first consumes the flag and the other is a no-op.
+**After a page refresh, the `delta = 0` popstate does not arrive.** Next.js does not invoke `beforePopState` for the library's synthetic `history.go()` restore after a reload, so step 5 above never fires. To cover this case, a `requestAnimationFrame(() => setTimeout(..., 0))` fallback is also scheduled at step 3. It runs the handler exactly once via the same `pendingNavigation` flag — whichever path (popstate or fallback) fires first consumes the flag and the other is a no-op.
 
 > **MDN Reference**: "This method is asynchronous. Add a listener for the popstate event in order to determine when the navigation has completed."
 > — [MDN Web Docs: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
@@ -358,8 +372,8 @@ We wait for `history.go()` to complete by listening for the popstate event with 
 
 | State | Purpose |
 |-------|---------|
-| `pendingHandlerExecution` | True when waiting for history.go() to complete |
-| `pendingHistoryIndexDelta` | Stored delta for navigation after handler approves |
+| `pendingNavigation` | True when waiting for history.go() to complete |
+| `pending navigation delta` | Stored delta for navigation after handler approves |
 
 ---
 
@@ -381,14 +395,14 @@ We wait for `history.go()` to complete by listening for the popstate event with 
 
 ## Internal Handling Scenarios
 
-### Scenario 7: Delta is 0 (Pending Handler Execution or Restoration)
+### Scenario 7: Delta is 0 (Restore Completion)
 
-After blocking, `history.go(-delta)` triggers another popstate with delta = 0. This can mean:
-1. **Pending handler execution**: URL restoration complete, now run the handler
-2. **Simple restoration**: Just ignore (infinite loop prevention)
+After the interceptor starts restoring the URL, `history.go(-delta)` triggers another popstate with delta = 0. Its meaning depends on whether a navigation is pending:
+1. **Pending navigation exists**: URL restoration is complete; consume it and run the handler.
+2. **No pending navigation**: This is a late restore echo after the fallback already consumed the navigation; ignore it.
 
 ```
-User back → handler cancel → history.go(1) called
+User back → save delta -1 → history.go(1) called
     │
     ▼
 popstate re-fired
@@ -397,12 +411,12 @@ popstate re-fired
 delta = currentIndex - currentIndex = 0
     │
     ▼
-Event ignored (infinite loop prevention)
+pending navigation exists → consume it → execute handler
 ```
 
 ### Scenario 8: Token Mismatch Restoration Popstate
 
-When blocking a token mismatch, `history.go(1)` triggers another popstate. That restore lands back on our matching-token entry, so the echo is routed to the internal-navigation path and swallowed by its `delta === 0` branch (same mechanism as Scenario 7) — no separate flag is needed.
+When guarding a session boundary, `history.go(1)` triggers another popstate. The restore lands back on our matching-token entry, so the echo is routed to the internal-navigation path. Its `delta === 0` branch consumes the pending navigation and runs the handler (the same mechanism as Scenario 7); no boundary-specific restore flag is needed.
 
 ```
 Token Mismatch detected → history.go(1) called
@@ -414,7 +428,7 @@ popstate re-fired (by go(1)) → lands on matching-token entry
 Routed to internal navigation → delta === 0
     │
     ▼
-Ignore event (same as Scenario 7)
+Consume pending navigation and run handler (same as Scenario 7)
 ```
 
 ### Scenario 9: Once Handler After Refresh (Empty HandlerMap with preRegisteredHandler)
@@ -477,15 +491,16 @@ isNavigationConfirmed?  (a handler already approved this navigation)
          │
          ├── YES → handleSessionBoundary
          │          ├── handlers registered?
-         │          │    ├── YES → history.go(1) to restore the URL, then (once the
-         │          │    │         browser settles) run the handler:
-         │          │    │           ├── allow → set isNavigationConfirmed, history.back()
+         │          │    ├── YES → begin pending navigation (-1), history.go(1) to restore
+         │          │    │         the URL, then run the handler after the delta-0 echo
+         │          │    │         (or completion fallback):
+         │          │    │           ├── allow → confirm next navigation, history.go(-1)
          │          │    │           └── block → stay
          │          │    └── NO  → run preRegisteredHandler
          │          │              ├── block → history.go(1) to restore
          │          │              └── allow → adopt the landed entry, allow
-         │          └── (the go(1) restore's echo lands on the matching-token entry, so it
-         │              is swallowed by the delta === 0 branch below — no extra flag)
+         │          └── the go(1) restore echo lands on the matching-token entry and the
+         │              delta === 0 branch below consumes the pending navigation
          │
          └── NO → handleInternalNavigation (classify by index delta)
                    ├── delta === 0
@@ -494,8 +509,9 @@ isNavigationConfirmed?  (a handler already approved this navigation)
                    ├── delta > 0  → forward navigation → allow
                    └── delta < 0  → back navigation
                          ├── handlers registered?
-                         │    ├── YES → history.go(-delta) to restore the URL, then run the
-                         │    │         handler (allow → set isNavigationConfirmed, go(delta);
+                         │    ├── YES → begin pending navigation (delta), history.go(-delta)
+                         │    │         to restore the URL, then run the handler
+                         │    │         (allow → confirm next navigation, go(delta);
                          │    │                   block → stay)
                          │    └── NO  → run preRegisteredHandler
                          │              ├── block → history.go(-delta) to restore
@@ -529,7 +545,9 @@ interface PartialBackNavigationHandlerOptions {
 
 | File | Purpose |
 |------|---------|
-| `src/useInterceptPopState.ts` | Popstate interception (core logic) |
+| `src/useInterceptPopState.ts` | Next.js `beforePopState` integration |
+| `src/useInterceptPopState.helper/popstate-interceptor.ts` | Popstate classification and restore/replay flow |
+| `src/useInterceptPopState.helper/pending-navigation.ts` | Pending back-navigation delta |
 | `src/useRegisterBackNavigationHandler.ts` | Handler registration hook |
 | `src/useInterceptPopState.helper/history-augmentation.ts` | History API patching |
 | `src/BackNavigationHandlerProvider.tsx` | Provider component |

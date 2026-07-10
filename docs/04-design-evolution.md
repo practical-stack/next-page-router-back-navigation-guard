@@ -239,4 +239,5 @@ useRegisterBackNavigationHandler(
 |------|---------|
 | `src/useRegisterBackNavigationHandler.ts` | Handler registration with options |
 | `src/useInterceptPopState.helper/sort-handlers.ts` | Priority-based sorting |
-| `src/useInterceptPopState.ts` | Handler execution logic |
+| `src/useInterceptPopState.helper/handler-execution.ts` | Priority-based handler execution |
+| `src/useInterceptPopState.helper/popstate-interceptor.ts` | Navigation restore and handler orchestration |

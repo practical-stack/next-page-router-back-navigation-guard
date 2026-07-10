@@ -163,7 +163,7 @@
 <main>
 <h1>뒤로가기 한 번의 생애주기 — 세션 경계(토큰 mismatch)</h1>
 <p style="color:var(--muted)">
-이 문서는 <code class="inline">src/useInterceptPopState.ts</code>의 <strong>두 번째 분기 — <code class="inline">handleSessionBoundary</code></strong>가
+이 문서는 <code class="inline">src/useInterceptPopState.helper/popstate-interceptor.ts</code>의 <strong>session boundary 분기 — <code class="inline">handleSessionBoundary</code></strong>가
 타는 흐름을 시간순 tick 단위로 추적합니다. 토큰이 <strong>일치</strong>하는 평범한 내부 뒤로가기는
 <span class="file-pill">back-navigation-lifecycle.html</span>에서 다룹니다. 이 문서는 토큰이 <strong>어긋났을 때(mismatch)</strong>만 다룹니다.
 </p>
@@ -176,14 +176,14 @@
 <h2 class="sec" id="what">0. 이 문서가 추적하는 것</h2>
 <p>
 정상 back과 mismatch는 <strong>"뒤로가기를 일단 되돌려 놓고 → 핸들러에게 물어보고 → 승인되면 다시 한다"</strong>는 큰 줄기가 같습니다.
-사실 <strong>완료 감지·핸들러 실행·재실행까지 모두 같은 <code class="inline">pendingRestore</code> 메커니즘을 공유</strong>합니다. 유일하게 다른 건 <strong>"되돌리는 방법"</strong>입니다. 정상 back은 인덱스 델타로 정확히
+사실 <strong>완료 감지·핸들러 실행·재실행까지 모두 같은 <code class="inline">pendingNavigation</code> 메커니즘을 공유</strong>합니다. 유일하게 다른 건 <strong>"되돌리는 방법"</strong>입니다. 정상 back은 인덱스 델타로 정확히
 <code class="inline">go(-delta)</code>하지만, 경계 너머에서는 <strong>인덱스가 서로 다른 세션의 것이라 비교 불가</strong>라 델타를 못 구합니다 → "한 칸 뒤" 가정.
 </p>
 <div class="card">
 <p style="margin:0">경계는 <strong>정상 back과 거의 같은 길</strong>을 탑니다. 실질적 차이는 <strong>"되돌리는 방법" 하나</strong>뿐입니다.</p>
 <ul style="margin:8px 0 0">
-  <li><strong>복원(유일한 차이):</strong> 델타를 못 구하므로 <strong>"한 칸 뒤로 갔다고 가정"</strong>하고 <code class="inline">setPending(-1)</code> + <code class="inline">history.go(1)</code>로 되돌린다. (정상 back은 <code class="inline">setPending(delta)</code> + <code class="inline">go(-delta)</code> — 정확한 칸수.)</li>
-  <li><strong>완료 감지(정상 back과 동일):</strong> <code class="inline">setPending(-1)</code> 후 <code class="inline">go(1)</code>하면 그 echo가 <code class="inline">delta===0</code>으로 돌아오고, 토큰이 일치하는 엔트리(B)라 <code class="inline">handleInternalNavigation</code>의 <code class="inline">delta===0 && isPending()</code> 분기가 <code class="inline">runPendingHandlerOnce</code>를 부른다. 새로고침처럼 echo가 안 올 때를 위해 <code class="inline">afterHistoryGoSettles</code>(rAF+setTimeout) fallback도 같이 건다 — 둘 중 먼저 오는 쪽이 이긴다(<code class="inline">consume</code> 멱등).</li>
+  <li><strong>복원(유일한 차이):</strong> 델타를 못 구하므로 <strong>"한 칸 뒤로 갔다고 가정"</strong>하고 <code class="inline">begin(-1)</code> + <code class="inline">history.go(1)</code>로 되돌린다. (정상 back은 <code class="inline">begin(delta)</code> + <code class="inline">go(-delta)</code> — 정확한 칸수.)</li>
+  <li><strong>완료 감지(정상 back과 동일):</strong> <code class="inline">begin(-1)</code> 후 <code class="inline">go(1)</code>하면 그 echo가 <code class="inline">delta===0</code>으로 돌아오고, 토큰이 일치하는 엔트리(B)라 <code class="inline">handleInternalNavigation</code>의 <code class="inline">delta===0 &amp;&amp; hasPending()</code> 분기가 <code class="inline">completeRestoreAndRunHandlers</code>를 부른다. 새로고침처럼 echo가 안 올 때를 위해 <code class="inline">scheduleRestoreCompletionFallback</code>(rAF+setTimeout) fallback도 같이 건다 — 둘 중 먼저 오는 쪽이 이긴다(<code class="inline">consume</code> 멱등).</li>
 </ul>
 </div>
 
@@ -194,7 +194,7 @@
   <span class="kw">return</span> !nextSessionToken <span class="com">/* 토큰 없음 */</span> || nextSessionToken !== currentSessionToken <span class="com">/* 다른 토큰 */</span>;
 }</pre>
 <table>
-<tr><th>경우</th><th>의미</th><th>computeNextRenderedState 결과</th></tr>
+<tr><th>경우</th><th>의미</th><th>createRenderedHistoryEntryMetadata 결과</th></tr>
 <tr><td><strong>토큰 없음</strong> <code>∅</code></td><td>라이브러리 장착 전 만들어졌거나 외부에서 들어온, 우리 메타데이터가 없는 엔트리. <strong>이 문서의 주 시나리오.</strong></td><td><code>{ token: 새로 생성, idx: 0 }</code> — <strong>새 세션 시작</strong></td></tr>
 <tr><td><strong>다른 토큰</strong> <code>σ</code></td><td>이전 세션의 엔트리(모듈-평가 토큰 복원이 적용되지 않은 경우 등). 드묾.</td><td><code>{ token: σ, idx: nextHistoryIndex }</code> — <strong>그 세션으로 전환</strong></td></tr>
 </table>
@@ -205,7 +205,7 @@
   <span><span class="dot" style="background:var(--pink)"></span> 사용자 (User)</span>
   <span><span class="dot" style="background:var(--orange)"></span> 브라우저 (History API)</span>
   <span><span class="dot" style="background:var(--accent)"></span> popstate 이벤트</span>
-  <span><span class="dot" style="background:var(--purple)"></span> 라이브러리 (popstateHandler)</span>
+  <span><span class="dot" style="background:var(--purple)"></span> 라이브러리 (interceptPopstate)</span>
   <span><span class="dot" style="background:var(--green)"></span> Next.js Router</span>
 </div>
 <table>
@@ -213,7 +213,7 @@
 <tr><td><span class="pill" style="color:var(--pink);border-color:var(--pink)">User</span></td><td>뒤로가기를 <strong>한 번</strong> 누른다. 이후 연쇄는 모두 자동.</td></tr>
 <tr><td><span class="pill" style="color:var(--orange);border-color:var(--orange)">Browser</span></td><td><code>history.go(1)</code>(복원) / <code>history.go(-1)</code>(떠남)로 스택을 옮기고, 끝나면 <code>popstate</code>를 쏜다. <strong>비동기.</strong></td></tr>
 <tr><td><span class="pill b">popstate</span></td><td>이동 <strong>완료 후</strong> 발생. Next가 가로채 우리 <code>beforePopState</code> 콜백을 부른다.</td></tr>
-<tr><td><span class="pill" style="color:var(--purple);border-color:var(--purple)">Library</span></td><td>이번엔 <code>handleSessionBoundary</code> 분기를 탄다. 복원은 <code>setPending(-1)</code>+<code>go(1)</code>, 완료 감지는 정상 back과 같은 <code>pendingRestore</code>(echo의 <code>delta===0</code> 또는 새로고침 fallback).</td></tr>
+<tr><td><span class="pill" style="color:var(--purple);border-color:var(--purple)">Library</span></td><td>이번엔 <code>handleSessionBoundary</code> 분기를 탄다. 복원은 <code>begin(-1)</code>+<code>go(1)</code>, 완료 감지는 정상 back과 같은 <code>pendingNavigation</code>(echo의 <code>delta===0</code> 또는 새로고침 fallback).</td></tr>
 <tr><td><span class="pill t">Next Router</span></td><td><code>beforePopState</code>가 <code>false</code>면 멈추고, <code>true</code>면 정상 렌더.</td></tr>
 </table>
 </div>
@@ -232,7 +232,7 @@
   <span class="frame here">B <span style="opacity:.7">{idx:0, token:τ}</span> ← 현재</span>
 </div>
 <p style="font-size:13px;color:var(--muted)">τ = 현재 세션 토큰. <code class="inline">∅</code> = 메타데이터 없음 → 뒤로가기로 A에 도착하면 토큰 mismatch.
-renderedState(라이브러리의 "진실") = <code class="inline">{ historyIndex: 0, sessionToken: τ }</code></p>
+renderedMetadata(라이브러리의 "진실") = <code class="inline">{ historyIndex: 0, sessionToken: τ }</code></p>
 
 <!-- ============================================ -->
 <h2 class="sec">준비 단계 — 토큰 없는 A는 어떻게 생기나</h2>
@@ -260,7 +260,7 @@ renderedState(라이브러리의 "진실") = <code class="inline">{ historyIndex
       <p>A→B 이동(<code class="inline">router.push("/b")</code>) 시점엔 패치가 없어 B도 메타데이터 없이 push된다.
       그 직후 B에서 Provider가 마운트되며 <code class="inline">initializeHistoryStateSyncOnce()</code>가:</p>
       <ul style="margin:4px 0">
-        <li>모듈-평가 캡처 없음(새 진입) → <code class="inline">renderedState = { idx:0, token:τ(새로 생성) }</code></li>
+        <li>모듈-평가 캡처 없음(새 진입) → <code class="inline">renderedMetadata = { idx:0, token:τ(새로 생성) }</code></li>
         <li><code class="inline">history.pushState</code> / <code class="inline">replaceState</code> <strong>몽키패치</strong></li>
         <li>현재 엔트리 B에 stamp → <code class="inline">B.state = { idx:0, token:τ }</code></li>
       </ul>
@@ -271,17 +271,17 @@ renderedState(라이브러리의 "진실") = <code class="inline">{ historyIndex
         <span class="frame here">B {idx:0, τ} ← 현재 · 핸들러 등록됨</span>
       </div>
       <div class="statebox">
-        <span class="k">renderedState</span><span class="v hl">{ idx: 0, token: τ }</span>
+        <span class="k">renderedMetadata</span><span class="v hl">{ idx: 0, token: τ }</span>
         <span class="k">history.state (B)</span><span class="v">{ idx: 0, token: τ }</span>
         <span class="k">history.state (A)</span><span class="v">∅ (메타데이터 없음)</span>
-        <span class="k">isNavigationConfirmed</span><span class="v">false</span>
+        <span class="k">nextNavigationConfirmed</span><span class="v">false</span>
       </div>
     </div>
   </div>
 
 </div>
 
-<div class="note">준비 끝. <strong>B에 있고</strong>, renderedState/B.state는 <code class="inline">{idx:0, τ}</code>로 일치하지만 <strong>그 뒤의 A에는 토큰이 없다</strong>. 여기서 사용자가 뒤로가기를 누르면 — A에 도착하는 순간 mismatch가 터진다.</div>
+<div class="note">준비 끝. <strong>B에 있고</strong>, renderedMetadata/B.state는 <code class="inline">{idx:0, τ}</code>로 일치하지만 <strong>그 뒤의 A에는 토큰이 없다</strong>. 여기서 사용자가 뒤로가기를 누르면 — A에 도착하는 순간 mismatch가 터진다.</div>
 
 <!-- ============================================ -->
 <h2 class="sec">경계 뒤로가기 연쇄 — 토큰이 어긋난 채로 도착</h2>
@@ -305,23 +305,23 @@ renderedState(라이브러리의 "진실") = <code class="inline">{ historyIndex
     <div class="marker">T2</div>
     <div class="head"><span class="who">popstate</span> 1차 popstate → <code>handleSessionBoundary</code> → <span class="pill f">block</span></div>
     <div class="body">
-      <p>이동 완료로 <code class="inline">popstate</code> 발생 → <code class="inline">popstateHandler(history.state)</code>. 인자는 A의 state <code class="inline">∅</code>.</p>
+      <p>이동 완료로 <code class="inline">popstate</code> 발생 → <code class="inline">interceptPopstate(history.state)</code>. 인자는 A의 state <code class="inline">∅</code>.</p>
       <pre><span class="com">// 파싱: nextSessionToken = undefined, nextHistoryIndex = Number(undefined)||0 = 0</span>
-<span class="com">// current(renderedState) = { idx:0, τ }</span>
+<span class="com">// current(renderedMetadata) = { idx:0, τ }</span>
 
-<span class="com">// 분기 0:</span> isNavigationConfirmed? <span class="kw">false</span> → skip
+<span class="com">// 분기 0:</span> nextNavigationConfirmed? <span class="kw">false</span> → skip
 <span class="com">// 분기 1:</span> hasSessionTokenMismatch(undefined, τ)? <span class="kw">true</span> <span class="com">(!undefined) → 여기!</span></pre>
       <p>토큰이 없으니 mismatch → <code class="inline">handleSessionBoundary</code> 진입. 핸들러가 등록돼 있으므로(<code class="inline">hasRegisteredHandlers</code> true) 빈-맵 fast path를 건너뛴다:</p>
-      <pre><span class="fn">pendingRestore.setPending</span>(<span class="num">-1</span>);    <span class="com">// 델타 못 구함 → "한 칸 뒤" 가정</span>
+      <pre><span class="fn">pendingNavigation.begin</span>(<span class="num">-1</span>);    <span class="com">// 델타 못 구함 → "한 칸 뒤" 가정</span>
 window.history.<span class="fn">go</span>(<span class="num">1</span>);                <span class="com">// -(-1) = +1 → B로 복원</span>
-<span class="fn">afterHistoryGoSettles</span>(fallback);  <span class="com">// echo가 안 올 때(새로고침) 대비 보험</span>
+<span class="fn">scheduleRestoreCompletionFallback</span>(fallback);  <span class="com">// echo가 안 올 때(새로고침) 대비 보험</span>
 <span class="kw">return</span> <span class="kw">false</span>;                  <span class="com">// ★ Next.js 라우팅 차단</span></pre>
       <div class="warn"><strong>왜 <code class="inline">go(-delta)</code>가 아니라 <code class="inline">go(1)</code>인가:</strong> 경계 너머 A의 인덱스(0)는 <strong>우리 세션 τ의 인덱스가 아니다</strong>. 서로 다른 세션의 숫자를 빼봐야 의미가 없으므로 델타를 포기하고, "뒤로가기 = 한 칸 뒤"라는 가정으로 <code class="inline">go(1)</code> 복원한다.</div>
-      <div class="warn"><strong>정상 back과 같은 <code class="inline">pendingRestore</code>를 쓴다:</strong> <code class="inline">setPending(-1)</code>만 넣어 두면 <code class="inline">go(1)</code> echo가 <code class="inline">delta===0</code>으로 돌아올 때(<a href="#t4">T4</a>) <code class="inline">handleInternalNavigation</code>의 <code class="inline">delta===0 && isPending()</code> 분기가 <code class="inline">runPendingHandlerOnce</code>를 불러 — 정상 back과 <strong>완전히 같은 완료 경로</strong>가 된다. <code class="inline">afterHistoryGoSettles</code>는 "echo가 안 오는 새로고침"용 fallback일 뿐이다(<code class="inline">consume</code> 멱등 → 둘 중 먼저 온 쪽만 실행).</div>
-      <div class="note"><strong>복원 echo가 곧 완료 신호:</strong> <code class="inline">go(1)</code> 복원은 토큰이 <strong>일치하는</strong> 엔트리(B)로 되돌아오므로, 그 echo는 경계가 아니라 <code class="inline">handleInternalNavigation</code>으로 떨어진다. 거기서 <code class="inline">delta===0 && isPending()</code>이라 <strong>echo가 그대로 핸들러 실행을 발화</strong>한다(<a href="#t4">T4</a>). 별도 플래그 없이 "토큰 일치 + pending" 두 조건만으로 동작한다(<a href="#flag">아래 절</a>).</div>
+      <div class="warn"><strong>정상 back과 같은 <code class="inline">pendingNavigation</code>를 쓴다:</strong> <code class="inline">begin(-1)</code>만 넣어 두면 <code class="inline">go(1)</code> echo가 <code class="inline">delta===0</code>으로 돌아올 때(<a href="#t4">T4</a>) <code class="inline">handleInternalNavigation</code>의 <code class="inline">delta===0 &amp;&amp; hasPending()</code> 분기가 <code class="inline">completeRestoreAndRunHandlers</code>를 불러 — 정상 back과 <strong>완전히 같은 완료 경로</strong>가 된다. <code class="inline">scheduleRestoreCompletionFallback</code>는 "echo가 안 오는 새로고침"용 fallback일 뿐이다(<code class="inline">consume</code> 멱등 → 둘 중 먼저 온 쪽만 실행).</div>
+      <div class="note"><strong>복원 echo가 곧 완료 신호:</strong> <code class="inline">go(1)</code> 복원은 토큰이 <strong>일치하는</strong> 엔트리(B)로 되돌아오므로, 그 echo는 경계가 아니라 <code class="inline">handleInternalNavigation</code>으로 떨어진다. 거기서 <code class="inline">delta===0 &amp;&amp; hasPending()</code>이라 <strong>echo가 그대로 핸들러 실행을 발화</strong>한다(<a href="#t4">T4</a>). 별도 플래그 없이 "토큰 일치 + pending" 두 조건만으로 동작한다(<a href="#flag">아래 절</a>).</div>
       <div class="statebox">
-        <span class="k">renderedState</span><span class="v">{ idx:0, τ } <span style="color:var(--muted)">(안 바뀜)</span></span>
-        <span class="k">pendingRestore</span><span class="v hl">{ delta: -1 }</span>
+        <span class="k">renderedMetadata</span><span class="v">{ idx:0, τ } <span style="color:var(--muted)">(안 바뀜)</span></span>
+        <span class="k">pendingNavigation</span><span class="v hl">{ delta: -1 }</span>
         <span class="k">반환</span><span class="v">false → Next 차단</span>
       </div>
     </div>
@@ -349,14 +349,14 @@ window.history.<span class="fn">go</span>(<span class="num">1</span>);          
 <span class="com">// 분기 1: hasSessionTokenMismatch(τ, τ)? false → skip → handleInternalNavigation</span>
 historyIndexDelta = <span class="num">0</span> − <span class="num">0</span> = <span class="num">0</span>;
 
-<span class="kw">if</span> (delta === <span class="num">0</span> && pendingRestore.<span class="fn">isPending</span>()) {   <span class="com">// ← T2에서 setPending(-1) 했음!</span>
-  <span class="fn">runPendingHandlerOnce</span>();                          <span class="com">// 드디어 핸들러 실행 (정상 back과 동일)</span>
+<span class="kw">if</span> (delta === <span class="num">0</span> &amp;&amp; pendingNavigation.<span class="fn">hasPending</span>()) {   <span class="com">// ← T2에서 begin(-1) 했음!</span>
+  <span class="fn">completeRestoreAndRunHandlers</span>();                          <span class="com">// 드디어 핸들러 실행 (정상 back과 동일)</span>
   <span class="kw">return</span> <span class="kw">false</span>;
 }</pre>
-      <div class="note"><strong>핵심:</strong> 경계가 일으킨 <code class="inline">go(1)</code> 복원의 echo popstate가 <strong>완료 신호 역할</strong>을 한다. 복원 destination B의 토큰이 τ로 일치해 echo가 Internal로 라우팅되고, <code class="inline">delta===0 && isPending()</code>이라 <code class="inline">runPendingHandlerOnce</code>가 불린다 — 정상 back의 T4와 토씨까지 같은 경로다. (새로고침이라 이 echo가 안 오면 T2의 <code class="inline">afterHistoryGoSettles</code> fallback이 대신 부른다.)</div>
+      <div class="note"><strong>핵심:</strong> 경계가 일으킨 <code class="inline">go(1)</code> 복원의 echo popstate가 <strong>완료 신호 역할</strong>을 한다. 복원 destination B의 토큰이 τ로 일치해 echo가 Internal로 라우팅되고, <code class="inline">delta===0 &amp;&amp; hasPending()</code>이라 <code class="inline">completeRestoreAndRunHandlers</code>가 불린다 — 정상 back의 T4와 토씨까지 같은 경로다. (새로고침이라 이 echo가 안 오면 T2의 <code class="inline">scheduleRestoreCompletionFallback</code> fallback이 대신 부른다.)</div>
       <div class="statebox">
-        <span class="k">renderedState</span><span class="v">{ idx:0, τ } (안 바뀜)</span>
-        <span class="k">pendingRestore</span><span class="v hl">consume → null</span>
+        <span class="k">renderedMetadata</span><span class="v">{ idx:0, τ } (안 바뀜)</span>
+        <span class="k">pendingNavigation</span><span class="v hl">consume → null</span>
         <span class="k">반환</span><span class="v">false</span>
       </div>
     </div>
@@ -364,20 +364,20 @@ historyIndexDelta = <span class="num">0</span> − <span class="num">0</span> = 
 
   <div class="tick lib" id="t5">
     <div class="marker">T5</div>
-    <div class="head"><span class="who">Library</span> <code>runPendingHandlerOnce</code> → 핸들러에게 물어봄</div>
+    <div class="head"><span class="who">Library</span> <code>completeRestoreAndRunHandlers</code> → 핸들러에게 물어봄</div>
     <div class="body">
-      <p>T4의 echo가 부른 <code class="inline">runPendingHandlerOnce</code>가 보류해 둔 복원을 <code class="inline">consume</code>하고 핸들러를 실행한다(새로고침이면 T2의 fallback이 같은 함수를 부른다). 정상 back과 완전히 같은 함수·같은 흐름이다.</p>
-      <pre><span class="kw">const</span> consumedRestore = pendingRestore.<span class="fn">consume</span>();  <span class="com">// {delta:-1} 꺼내고 null로 (원자적)</span>
-<span class="kw">if</span> (!consumedRestore) <span class="kw">return</span>;                     <span class="com">// 이미 소비됐으면 no-op (멱등)</span>
+      <p>T4의 echo가 부른 <code class="inline">completeRestoreAndRunHandlers</code>가 보류해 둔 복원을 <code class="inline">consume</code>하고 핸들러를 실행한다(새로고침이면 T2의 fallback이 같은 함수를 부른다). 정상 back과 완전히 같은 함수·같은 흐름이다.</p>
+      <pre><span class="kw">const</span> consumedNavigation = pendingNavigation.<span class="fn">consume</span>();  <span class="com">// {delta:-1} 꺼내고 null로 (원자적)</span>
+<span class="kw">if</span> (!consumedNavigation) <span class="kw">return</span>;                     <span class="com">// 이미 소비됐으면 no-op (멱등)</span>
 
 <span class="kw">void</span> (<span class="kw">async</span> () => {
   <span class="kw">const</span> destinationPath = location.pathname + location.search;
   <span class="kw">const</span> shouldAllow =
-    <span class="kw">await</span> <span class="fn">runHandlerChainAndGetShouldAllowNavigation</span>(handlerContext, destinationPath);
+    <span class="kw">await</span> <span class="fn">runHandlerChain</span>({ handlerMap, preRegisteredHandler, destinationPath });
   …  <span class="com">// 분기 A / B (아래)</span>
 })();</pre>
       <p>핸들러 체인은 우선순위 1등 하나를 <code class="inline">await</code>로 실행하고 boolean을 받는다. "정말 나가시겠어요?" 다이얼로그가 보통 여기다. 결과에 따라 두 갈래.</p>
-      <p style="font-size:12.5px;color:var(--muted)">※ destination은 <code class="inline">runPendingHandlerOnce</code>를 공유하므로 정상 back과 똑같이 복원된 엔트리(B)의 <code class="inline">location.pathname + search</code>를 넘긴다. 공개 <code class="inline">() =&gt; boolean</code> 핸들러엔 어차피 안 보이는 값이다.</p>
+      <p style="font-size:12.5px;color:var(--muted)">※ destination은 <code class="inline">completeRestoreAndRunHandlers</code>를 공유하므로 정상 back과 똑같이 복원된 엔트리(B)의 <code class="inline">location.pathname + search</code>를 넘긴다. 공개 <code class="inline">() =&gt; boolean</code> 핸들러엔 어차피 안 보이는 값이다.</p>
     </div>
   </div>
 
@@ -403,10 +403,10 @@ historyIndexDelta = <span class="num">0</span> − <span class="num">0</span> = 
 <div class="card">
 <p>사용자가 "나가기"를 눌렀다 → 핸들러가 <code class="inline">true</code>. 라이브러리가 막아 놨던 경계 뒤로가기를 직접 재실행한다.</p>
 <pre><span class="fn">debug</span>(<span class="str">"[Internal] Handler confirmed"</span>);
-interceptionStateContext.<span class="fn">setState</span>({ isNavigationConfirmed: <span class="kw">true</span> });  <span class="com">// ★ 다음 popstate는 통과시켜라</span>
-window.history.<span class="fn">go</span>(consumedRestore.delta);  <span class="com">// go(-1) → 진짜로 A로 이동 ("한 칸 가정")</span></pre>
-<div class="danger"><strong>왜 <code class="inline">isNavigationConfirmed = true</code>를 먼저 세우나:</strong> 곧 부를 <code class="inline">go(-1)</code>이 <strong>또</strong> popstate를 일으킨다. 이걸 새 경계로 오인하면 핸들러를 또 실행 → 또 승인 → 또 <code class="inline">go()</code> → 무한 루프. 이 표식이 분기 0에서 핸들러를 건너뛰게 해 한 번에 끝낸다. (정상 back의 분기 B와 <strong>완전히 동일</strong> — <code class="inline">go(consumedRestore.delta)</code>가 여기선 <code class="inline">go(-1)</code>일 뿐이다.)</div>
-<p style="font-size:12.5px;color:var(--muted)">※ leave 재실행 단계는 renderedState를 건드리지 않는다(<code class="inline">runPendingHandlerOnce</code>는 <code class="inline">isNavigationConfirmed</code>만 세우고 <code class="inline">go(-1)</code>). 새 세션 토큰은 <strong>T7 도착 시점에 한 번만</strong> 생긴다(토큰 없는 <code>∅</code> → <code class="inline">computeNextRenderedState</code>가 새 토큰 τ″ 생성). 토큰이 <strong>있는</strong>(<code>σ</code>) 경우엔 그 세션으로 그대로 전환된다.</p>
+interceptionState.<span class="fn">confirmNextNavigation</span>();  <span class="com">// ★ 다음 popstate는 통과시켜라</span>
+window.history.<span class="fn">go</span>(consumedNavigation.delta);  <span class="com">// go(-1) → 진짜로 A로 이동 ("한 칸 가정")</span></pre>
+<div class="danger"><strong>왜 <code class="inline">nextNavigationConfirmed = true</code>를 먼저 세우나:</strong> 곧 부를 <code class="inline">go(-1)</code>이 <strong>또</strong> popstate를 일으킨다. 이걸 새 경계로 오인하면 핸들러를 또 실행 → 또 승인 → 또 <code class="inline">go()</code> → 무한 루프. 이 표식이 분기 0에서 핸들러를 건너뛰게 해 한 번에 끝낸다. (정상 back의 분기 B와 <strong>완전히 동일</strong> — <code class="inline">go(consumedNavigation.delta)</code>가 여기선 <code class="inline">go(-1)</code>일 뿐이다.)</div>
+<p style="font-size:12.5px;color:var(--muted)">※ leave 재실행 단계는 renderedMetadata를 건드리지 않는다(<code class="inline">completeRestoreAndRunHandlers</code>는 <code class="inline">nextNavigationConfirmed</code>만 세우고 <code class="inline">go(-1)</code>). 새 세션 토큰은 <strong>T7 도착 시점에 한 번만</strong> 생긴다(토큰 없는 <code>∅</code> → <code class="inline">createRenderedHistoryEntryMetadata</code>가 새 토큰 τ″ 생성). 토큰이 <strong>있는</strong>(<code>σ</code>) 경우엔 그 세션으로 그대로 전환된다.</p>
 </div>
 
 <div class="tl">
@@ -426,15 +426,15 @@ window.history.<span class="fn">go</span>(consumedRestore.delta);  <span class="
     <div class="head"><span class="who">popstate</span> 3차 popstate → <strong>분기 0 (Confirmed)</strong> → <span class="pill t">통과</span></div>
     <div class="body">
       <p><code class="inline">back()</code> 완료로 popstate 재발생. 인자는 A의 state <code class="inline">∅</code>. 토큰을 따지기 <strong>전에</strong> 분기 0이 먼저 잡는다.</p>
-      <pre><span class="kw">if</span> (interceptionStateContext.<span class="fn">getState</span>().isNavigationConfirmed) {   <span class="com">// ← true! (분기 B에서 세움)</span>
+      <pre><span class="kw">if</span> (interceptionState.<span class="fn">isNextNavigationConfirmed</span>()) {   <span class="com">// ← true! (분기 B에서 세움)</span>
   <span class="kw">return</span> <span class="fn">handleConfirmedNavigation</span>({ nextSessionToken: undefined, nextHistoryIndex: <span class="num">0</span> });
 }
 
 <span class="com">// handleConfirmedNavigation:</span>
-interceptionStateContext.<span class="fn">setState</span>({ isNavigationConfirmed: <span class="kw">false</span> });   <span class="com">// 표식 리셋</span>
-renderedStateContext.<span class="fn">setState</span>(<span class="fn">computeNextRenderedState</span>(undefined, <span class="num">0</span>));  <span class="com">// {token:τ″(새 세션), idx:0}, sync OFF</span>
+interceptionState.<span class="fn">consumeConfirmation</span>();   <span class="com">// 표식 리셋</span>
+renderedHistoryEntryMetadataStore.<span class="fn">set</span>(<span class="fn">createRenderedHistoryEntryMetadata</span>({ sessionToken: undefined, historyIndex: <span class="num">0</span> }));  <span class="com">// {token:τ″(새 세션), idx:0}, sync OFF</span>
 <span class="kw">return</span> <span class="kw">true</span>;   <span class="com">// ★ Next.js가 A를 정상 렌더하도록 허용</span></pre>
-      <div class="note"><strong>경계를 넘는다 = 새 세션으로 갈아탄다.</strong> A엔 우리 토큰이 없었으므로 도착하는 순간 <strong>새 세션 토큰</strong>으로 renderedState를 초기화한다(<code class="inline">idx:0</code>). 만약 A가 다른 토큰 <code class="inline">σ</code>를 갖고 있었다면 그 세션의 <code class="inline">{σ, idx}</code>로 전환된다. 이후의 뒤로가기는 이 새 기준에서 다시 정상 분기를 탄다.</div>
+      <div class="note"><strong>경계를 넘는다 = 새 세션으로 갈아탄다.</strong> A엔 우리 토큰이 없었으므로 도착하는 순간 <strong>새 세션 토큰</strong>으로 renderedMetadata를 초기화한다(<code class="inline">idx:0</code>). 만약 A가 다른 토큰 <code class="inline">σ</code>를 갖고 있었다면 그 세션의 <code class="inline">{σ, idx}</code>로 전환된다. 이후의 뒤로가기는 이 새 기준에서 다시 정상 분기를 탄다.</div>
     </div>
   </div>
 
@@ -444,8 +444,8 @@ renderedStateContext.<span class="fn">setState</span>(<span class="fn">computeNe
     <div class="body">
       <div class="stack"><span class="frame here">A {idx:0, τ″} ← 도착 · 새 세션</span><span class="arrow">→</span><span class="frame">B {idx:0, τ}</span></div>
       <div class="statebox">
-        <span class="k">renderedState</span><span class="v hl">{ idx:0, τ″ } (새 세션)</span>
-        <span class="k">isNavigationConfirmed</span><span class="v">false (리셋됨)</span>
+        <span class="k">renderedMetadata</span><span class="v hl">{ idx:0, τ″ } (새 세션)</span>
+        <span class="k">nextNavigationConfirmed</span><span class="v">false (리셋됨)</span>
       </div>
       <p style="margin-bottom:0">새 세션 기준으로 상태 정합. 다음 뒤로가기는 다시 T1부터 깨끗하게 시작된다.</p>
     </div>
@@ -457,7 +457,7 @@ renderedStateContext.<span class="fn">setState</span>(<span class="fn">computeNe
 <p><code class="inline">handleSessionBoundary</code>의 <code class="inline">go(1)</code> 복원이 일으키는 echo popstate는 <strong>복원이 도착하는 엔트리의 토큰</strong>과 <strong>pending 유무</strong>에 따라 둘 중 하나로 처리된다 — 어느 쪽이든 <strong>전용 플래그는 없다</strong>.</p>
 <table>
 <tr><th>상황</th><th>echo가 떨어지는 분기</th><th>처리</th></tr>
-<tr><td>핸들러 등록됨 + <code>setPending(-1)</code> 후 (이 문서 주 시나리오)</td><td><code>handleInternalNavigation</code>의 <code>delta===0 && isPending()</code></td><td><code>runPendingHandlerOnce</code> <strong>발화</strong> = 완료 신호 (T4)</td></tr>
+<tr><td>핸들러 등록됨 + <code>begin(-1)</code> 후 (이 문서 주 시나리오)</td><td><code>handleInternalNavigation</code>의 <code>delta===0 &amp;&amp; hasPending()</code></td><td><code>completeRestoreAndRunHandlers</code> <strong>발화</strong> = 완료 신호 (T4)</td></tr>
 <tr><td>빈 handlerMap에서 block (<a href="#empty">곁가지 ②</a>)</td><td><code>handleInternalNavigation</code>의 <code>delta===0</code> (pending 없음)</td><td><code>return false</code>로 <strong>삼킴</strong></td></tr>
 </table>
 <div class="warn"><strong>공통 원리:</strong> <code class="inline">go(1)</code> 복원은 항상 우리가 출발했던 현재 엔트리(B)로 되돌아오고, B는 현재 토큰 τ를 가지므로 echo는 경계(mismatch)가 아니라 <code class="inline">handleInternalNavigation</code>으로 라우팅된다. 거기서 <code class="inline">pending</code>이 있으면 완료 신호로 쓰이고(핸들러 발화), 없으면(빈-맵 block) 이동이 없는 <code class="inline">delta===0</code> echo라 그냥 무시된다. "복원 중"임을 기억하는 별도 일회성 플래그는 어느 경우에도 필요 없다.</div>
@@ -466,11 +466,11 @@ renderedStateContext.<span class="fn">setState</span>(<span class="fn">computeNe
 <h2 class="sec" id="empty">곁가지 ② — 등록된 핸들러가 없을 때 (빈 handlerMap fast path)</h2>
 <p><code class="inline">handlerMap</code>이 비어 있으면(실사용 핸들러 0개) <code class="inline">preRegisteredHandler</code>(예: 오버레이 닫기)만 남는다. 경계 분기는 이걸 <strong>보류 없이 즉시</strong> 부른다.</p>
 <pre><span class="kw">if</span> (!<span class="fn">hasRegisteredHandlers</span>(handlerMap)) {
-  <span class="kw">if</span> (preRegisteredHandler && !<span class="fn">preRegisteredHandler</span>()) {  <span class="com">// 부수효과(오버레이 닫힘) 후 block</span>
+  <span class="kw">if</span> (preRegisteredHandler &amp;&amp; !<span class="fn">preRegisteredHandler</span>()) {  <span class="com">// 부수효과(오버레이 닫힘) 후 block</span>
     window.history.<span class="fn">go</span>(<span class="num">1</span>);   <span class="com">// URL 복원하고 멈춤</span>
     <span class="kw">return</span> <span class="kw">false</span>;
   }
-  renderedStateContext.<span class="fn">setState</span>(<span class="fn">computeNextRenderedState</span>(nextSessionToken, nextHistoryIndex));  <span class="com">// 도착 엔트리를 새 기준으로</span>
+  renderedHistoryEntryMetadataStore.<span class="fn">set</span>(<span class="fn">createRenderedHistoryEntryMetadata</span>({ sessionToken: nextSessionToken, historyIndex: nextHistoryIndex }));  <span class="com">// 도착 엔트리를 새 기준으로</span>
   <span class="kw">return</span> <span class="kw">true</span>;   <span class="com">// 통과</span>
 }</pre>
 <div class="danger"><strong>block 시 URL을 반드시 복원하는 이유:</strong> 복원하지 않으면 브라우저 URL은 이전 페이지로 가 있는데 Next.js는 현재 페이지를 렌더하는 어긋남이 생긴다. 최악(<code class="inline">once</code> 핸들러 + 경계): 1차 back이 막으며 핸들러 삭제 → 2차 back이 모달 닫음 → URL 미복원이면 이미 홈에 있어 3차 back이 사이트를 떠난다(about:blank). 그래서 막을 땐 <code class="inline">go(1)</code>로 되돌리는 게 필수.</div>
@@ -480,15 +480,15 @@ renderedStateContext.<span class="fn">setState</span>(<span class="fn">computeNe
 <table>
 <tr><th>항목</th><th>정상 (Internal · 토큰 일치)</th><th>경계 (Boundary · 토큰 mismatch)</th></tr>
 <tr><td>진입 조건</td><td>토큰 일치 + <code>delta &lt; 0</code></td><td>토큰 없음/다름</td></tr>
-<tr><td>복원 방법 <span class="pill f">차이</span></td><td><code>setPending(delta)</code> + <code>go(-delta)</code> (정확한 칸수)</td><td><code>setPending(-1)</code> + <code>go(1)</code> ("한 칸 뒤" 가정)</td></tr>
-<tr><td>완료 감지</td><td colspan="2" style="text-align:center"><strong>동일</strong> — <code>delta===0 && isPending()</code> 후속(echo) popstate → <code>runPendingHandlerOnce</code></td></tr>
-<tr><td>핸들러 보류/실행</td><td colspan="2" style="text-align:center"><strong>동일</strong> — <code>pendingRestore.setPending</code> → echo가 <code>consume</code> (멱등), <code>to</code> = 복원 엔트리 경로</td></tr>
+<tr><td>복원 방법 <span class="pill f">차이</span></td><td><code>begin(delta)</code> + <code>go(-delta)</code> (정확한 칸수)</td><td><code>begin(-1)</code> + <code>go(1)</code> ("한 칸 뒤" 가정)</td></tr>
+<tr><td>완료 감지</td><td colspan="2" style="text-align:center"><strong>동일</strong> — <code>delta===0 &amp;&amp; hasPending()</code> 후속(echo) popstate → <code>completeRestoreAndRunHandlers</code></td></tr>
+<tr><td>핸들러 보류/실행</td><td colspan="2" style="text-align:center"><strong>동일</strong> — <code>pendingNavigation.begin</code> → echo가 <code>consume</code> (멱등), <code>to</code> = 복원 엔트리 경로</td></tr>
 <tr><td>복원 echo 처리</td><td colspan="2" style="text-align:center"><strong>동일</strong> — 토큰 일치 엔트리로 복원 → Internal의 <code>delta===0 + pending</code> 분기가 완료 신호로 사용</td></tr>
-<tr><td>떠남 재실행</td><td colspan="2" style="text-align:center"><strong>동일</strong> — <code>go(consumedRestore.delta)</code> (경계는 그 값이 <code>-1</code>)</td></tr>
-<tr><td>새로고침 안전 fallback</td><td colspan="2" style="text-align:center"><strong>동일</strong> — 양쪽 다 <code>afterHistoryGoSettles</code> fallback을 건다 (echo가 안 오는 post-refresh 대비)</td></tr>
-<tr><td>떠난 뒤 renderedState <span class="pill f">차이</span></td><td>같은 세션, <code>idx</code> 감소</td><td><strong>새 세션</strong>(토큰 없음) 또는 <strong>그 세션으로 전환</strong>(토큰 σ)</td></tr>
+<tr><td>떠남 재실행</td><td colspan="2" style="text-align:center"><strong>동일</strong> — <code>go(consumedNavigation.delta)</code> (경계는 그 값이 <code>-1</code>)</td></tr>
+<tr><td>새로고침 안전 fallback</td><td colspan="2" style="text-align:center"><strong>동일</strong> — 양쪽 다 <code>scheduleRestoreCompletionFallback</code> fallback을 건다 (echo가 안 오는 post-refresh 대비)</td></tr>
+<tr><td>떠난 뒤 renderedMetadata <span class="pill f">차이</span></td><td>같은 세션, <code>idx</code> 감소</td><td><strong>새 세션</strong>(토큰 없음) 또는 <strong>그 세션으로 전환</strong>(토큰 σ)</td></tr>
 </table>
-<p style="font-size:13px;color:var(--muted)">정상 back과 경계가 다른 건 사실상 <strong>두 줄(복원 방법 · 떠난 뒤 세션)</strong>뿐이다. 나머지는 같은 <code class="inline">pendingRestore</code> 코드를 그대로 공유한다.</p>
+<p style="font-size:13px;color:var(--muted)">정상 back과 경계가 다른 건 사실상 <strong>두 줄(복원 방법 · 떠난 뒤 세션)</strong>뿐이다. 나머지는 같은 <code class="inline">pendingNavigation</code> 코드를 그대로 공유한다.</p>
 
 
 <!-- ============================================ -->
@@ -504,17 +504,17 @@ renderedStateContext.<span class="fn">setState</span>(<span class="fn">computeNe
  [T1] 뒤로가기 누름
   │        스택 A로 이동(막을 수 없음), history.state=A=∅
   │                          [T2] 1차 popstate ─▶ mismatch(undefined, τ)=true → handleSessionBoundary
-  │                                                setPending(-1); go(1); fallback 예약; return false ─▶ 차단
+  │                                                begin(-1); go(1); fallback 예약; return false ─▶ 차단
   │   [T3] go(1) 실행 → URL을 B로 복원
   │                          [T4] 2차 popstate(echo) ─▶ 토큰 τ 일치 → Internal, delta 0 + pending
-  │                                                runPendingHandlerOnce()  (새로고침이면 fallback이 대신)
+  │                                                completeRestoreAndRunHandlers()  (새로고침이면 fallback이 대신)
   │   [T5] consume{-1}; await handler(B 경로) ──┐
   │                                             ├─ false ─▶ 머무름. 끝.
   │                                             └─ true  ─▶ ↓ (분기 B)
-  │                            isNavigationConfirmed=true; go(consumedRestore.delta)=go(-1)
+  │                            nextNavigationConfirmed=true; go(consumedNavigation.delta)=go(-1)
   │   [T6] go(-1) 실행 → 진짜로 A로 이동
   │                          [T7] 3차 popstate ─▶ 분기0(Confirmed): handler 건너뜀
-  │                                                renderedState={τ″,0}(새 세션); return true ─▶ 통과
+  │                                                renderedMetadata={τ″,0}(새 세션); return true ─▶ 통과
   │                                                                                          Next가 A 렌더 ✓
   ▼
  완료: A에 도착(새 세션). 모든 상태 정합.
@@ -525,7 +525,7 @@ renderedStateContext.<span class="fn">setState</span>(<span class="fn">computeNe
 <table>
 <tr>
   <th>tick</th><th>발생 주체</th><th>history 위치</th>
-  <th><code>renderedState</code></th><th><code>pendingRestore</code></th>
+  <th><code>renderedMetadata</code></th><th><code>pendingNavigation</code></th>
   <th><code>isNavConfirmed</code></th><th>반환</th>
 </tr>
 <tr><td>P2</td><td>B 마운트·stamp</td><td>B</td><td>{0, τ}</td><td>null</td><td>false</td><td>—</td></tr>
@@ -533,17 +533,17 @@ renderedStateContext.<span class="fn">setState</span>(<span class="fn">computeNe
 <tr><td>T2</td><td>1차 popstate (boundary)</td><td>A</td><td>{0, τ}</td><td><span style="color:var(--orange)">{-1}</span></td><td>false</td><td><span class="pill f">false</span></td></tr>
 <tr><td>T3</td><td>go(1)</td><td><span style="color:var(--green)">B</span> (복원)</td><td>{0, τ}</td><td>{-1}</td><td>false</td><td>—</td></tr>
 <tr><td>T4</td><td>2차 popstate (echo, Internal)</td><td>B</td><td>{0, τ}</td><td>{-1} → 발화</td><td>false</td><td><span class="pill f">false</span></td></tr>
-<tr><td>T5</td><td>runPendingHandlerOnce, handler=true</td><td>B</td><td>{0, τ}</td><td><span style="color:var(--green)">null</span> (consume)</td><td><span style="color:var(--orange)">true</span></td><td>—</td></tr>
+<tr><td>T5</td><td>completeRestoreAndRunHandlers, handler=true</td><td>B</td><td>{0, τ}</td><td><span style="color:var(--green)">null</span> (consume)</td><td><span style="color:var(--orange)">true</span></td><td>—</td></tr>
 <tr><td>T6</td><td>go(-1)</td><td><span style="color:var(--green)">A</span> (이동)</td><td>{0, τ}</td><td>null</td><td>true</td><td>—</td></tr>
 <tr><td>T7</td><td>3차 popstate (Confirmed)</td><td>A</td><td><span style="color:var(--green)">{0, τ″}</span> (새 세션)</td><td>null</td><td><span style="color:var(--green)">false</span> (리셋)</td><td><span class="pill t">true</span></td></tr>
 </table>
-<p style="font-size:13px;color:var(--muted)">분기 A(머무름)라면 T5에서 핸들러가 false → <code class="inline">pendingRestore</code>만 null로 비우고 즉시 종료. T6·T7 없음, history 위치는 T3의 B 그대로.</p>
+<p style="font-size:13px;color:var(--muted)">분기 A(머무름)라면 T5에서 핸들러가 false → <code class="inline">pendingNavigation</code>만 null로 비우고 즉시 종료. T6·T7 없음, history 위치는 T3의 B 그대로.</p>
 
 <div class="good" style="margin-top:32px">
-<strong>한 줄 요약.</strong> 토큰이 어긋난 채 도착 = ① 막을 수 없는 강제 이동 → ② 1차 popstate에서 <strong>델타 대신 <code class="inline">setPending(-1) + go(1)</code></strong>로 되돌린 뒤 차단 → ③ 복원 echo가 토큰 일치 엔트리(B)로 돌아와 Internal의 <code class="inline">delta===0 + pending</code> 분기에서 <code class="inline">runPendingHandlerOnce</code>를 발화 → ④ 핸들러에게 물어봄 → ④-false면 머무름 / ④-true면 <code class="inline">isNavigationConfirmed</code> 세우고 <code class="inline">go(-1)</code> → ⑤ 3차 popstate를 분기 0이 통과시켜 <strong>새 세션으로 갈아타며</strong> 이동 완료. <strong>정상 back과 완전히 같은 <code class="inline">pendingRestore</code> 경로를 공유</strong>하고, 다른 건 <strong>"인덱스를 못 믿으니 델타 대신 한 칸 가정(<code class="inline">go(1)</code>)"</strong>과 "떠난 뒤 새 세션 전환"뿐이다.
+<strong>한 줄 요약.</strong> 토큰이 어긋난 채 도착 = ① 막을 수 없는 강제 이동 → ② 1차 popstate에서 <strong>델타 대신 <code class="inline">begin(-1) + go(1)</code></strong>로 되돌린 뒤 차단 → ③ 복원 echo가 토큰 일치 엔트리(B)로 돌아와 Internal의 <code class="inline">delta===0 + pending</code> 분기에서 <code class="inline">completeRestoreAndRunHandlers</code>를 발화 → ④ 핸들러에게 물어봄 → ④-false면 머무름 / ④-true면 <code class="inline">nextNavigationConfirmed</code> 세우고 <code class="inline">go(-1)</code> → ⑤ 3차 popstate를 분기 0이 통과시켜 <strong>새 세션으로 갈아타며</strong> 이동 완료. <strong>정상 back과 완전히 같은 <code class="inline">pendingNavigation</code> 경로를 공유</strong>하고, 다른 건 <strong>"인덱스를 못 믿으니 델타 대신 한 칸 가정(<code class="inline">go(1)</code>)"</strong>과 "떠난 뒤 새 세션 전환"뿐이다.
 </div>
 
-<p style="font-size:13px;color:var(--muted);margin-top:24px">관련 문서: <a href="./back-navigation-lifecycle.html" style="color:var(--accent)">정상 back navigation 생애주기</a> · <span class="file-pill">useInterceptPopState-explained.html</span> 분기 1 · <span class="file-pill">history-augmentation-explained.html</span>(토큰/인덱스 stamp)</p>
+<p style="font-size:13px;color:var(--muted);margin-top:24px">관련 문서: <a href="./back-navigation-lifecycle.html" style="color:var(--accent)">정상 back navigation 생애주기</a> · <span class="file-pill">popstate-interceptor.ts</span> 분기 1 · <span class="file-pill">history-augmentation-explained.html</span>(토큰/인덱스 stamp)</p>
 
 </main>
 </div>
