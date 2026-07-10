@@ -3,7 +3,7 @@
 ## Summary
 
 `preRegisteredHandler` **must maintain a stable reference**.
-Otherwise, the library's internal `interceptionStateContext` state gets reset,
+Otherwise, the library's internal `interceptionState` state gets reset,
 causing navigation to not work properly even when the user clicks "Leave" in an async handler.
 
 **Solution:**
@@ -24,19 +24,19 @@ It appeared to work normally without refresh, but the same bug was latent.
 
 `preRegisteredHandler` was defined without `useCallback`, **creating a new function reference on every render**.
 This caused `useIsomorphicLayoutEffect` to re-run whenever a re-render occurred,
-which creates a new `interceptionStateContext`.
+which creates a new `interceptionState`.
 
 **Important**: Using `currentOverlayRef` (a ref) is for accessing the latest value inside the function,
 not for stabilizing the function reference itself.
 
-This caused the `isNavigationConfirmed = true` state set by the previous async IIFE to be lost.
+This caused the `next-navigation confirmation` state set by the previous async IIFE to be lost.
 
 ---
 
 ## Library Code Structure
 
 ```typescript
-// use-intercept-popstate.ts
+// useInterceptPopState.ts
 export function useInterceptPopState({
   handlerMap,
   preRegisteredHandler,
@@ -47,38 +47,47 @@ export function useInterceptPopState({
   const pagesRouter = useContext(RouterContext);
 
   useIsomorphicLayoutEffect(() => {
-    const popstateHandler = createPopstateHandler(
-      handlerMap,
-      preRegisteredHandler
-    );
+    if (!pagesRouter) return;
 
-    pagesRouter.beforePopState(() => popstateHandler(history.state));
+    const interceptPopstate = createPopstateInterceptor({
+      handlerMap,
+      preRegisteredHandler,
+    });
+
+    pagesRouter.beforePopState(() => interceptPopstate(history.state));
 
     return () => {
       pagesRouter.beforePopState(() => true);
     };
-  }, [pagesRouter, preRegisteredHandler]);  // ← preRegisteredHandler is in deps
+  }, [handlerMap, pagesRouter, preRegisteredHandler]);  // ← preRegisteredHandler is in deps
 }
 
-const createPopstateHandler = (...) => {
-  const interceptionStateContext = createInterceptionStateContext();  // ← State created here!
-  // interceptionStateContext encapsulates isNavigationConfirmed and other state
+const createPopstateInterceptor = (...) => {
+  const interceptionState = createInterceptionState();  // ← State created here!
+  const pendingNavigation = createPendingNavigation();
+  // Both closure states must survive restore, handler execution, and replay.
 
   return (historyState) => {
     // Case 1: Handler approved navigation
-    if (interceptionStateContext.getState().isNavigationConfirmed) {
-      interceptionStateContext.setState({ isNavigationConfirmed: false });
+    if (interceptionState.isNextNavigationConfirmed()) {
+      interceptionState.consumeConfirmation();
       return true;  // ← Allow navigation
     }
     
     // ... other cases ...
     
-    // Case 5: Back navigation handling
+    // Back navigation: restore the URL first, then run handlers.
     (async () => {
-      const shouldAllowNavigation = await runHandlerChainAndGetShouldAllowNavigation(...);
+      const navigation = pendingNavigation.consume();
+      if (!navigation) return;
+      const shouldAllowNavigation = await runHandlerChain({
+        handlerMap,
+        preRegisteredHandler,
+        destinationPath: getCurrentPath(),
+      });
       if (shouldAllowNavigation) {
-        interceptionStateContext.setState({ isNavigationConfirmed: true });  // ← Set to true here
-        window.history.go(delta);
+        interceptionState.confirmNextNavigation();  // ← Set to true here
+        window.history.go(navigation.delta);
       }
     })();
     
@@ -99,7 +108,7 @@ Time →
 [T0] User clicks back button
      │
      ▼
-[T1] popstateHandler_A called (state_A.isNavigationConfirmed = false)
+[T1] interceptPopstate_A called (state_A confirmation = false)
      │
      ▼
 [T2] Dialog shown, waiting for user input...
@@ -108,19 +117,19 @@ Time →
 [T3] User clicks "Leave"
      │
      ▼
-[T4] state_A.isNavigationConfirmed = true set
+[T4] state_A confirmation set
      │
      ▼
 [T5] history.go(delta) called
      │
      ▼
-[T6] New popstate fired → popstateHandler_A called
+[T6] New popstate fired → interceptPopstate_A called
      │
      ▼
-[T7] state_A.isNavigationConfirmed === true → Navigation allowed ✅
+[T7] state_A confirmation === true → Navigation allowed ✅
 ```
 
-**Key:** Same `popstateHandler_A` instance is used throughout, so `state_A` is preserved.
+**Key:** Same `interceptPopstate_A` instance is used throughout, so `state_A` is preserved.
 
 ---
 
@@ -147,7 +156,7 @@ Time →
 [T0] User clicks back button
      │
      ▼
-[T1] popstateHandler_A called (state_A: isNavigationConfirmed = false)
+[T1] interceptPopstate_A called (state_A: confirmation = false)
      │
      ▼
 [T2] Dialog shown, re-render occurs for some reason while waiting for user input
@@ -158,26 +167,26 @@ Time →
      ▼
 [T2.2] Effect re-runs:
        ┌───────────────────────────────────────────────────────────┐
-       │ cleanup: popstateHandler_A released                       │
-       │ setup:   popstateHandler_B newly created                  │
-       │          (state_B: isNavigationConfirmed = false)         │  ← New state!
+       │ cleanup: interceptPopstate_A released                       │
+       │ setup:   interceptPopstate_B newly created                  │
+       │          (state_B: next-navigation confirmation = false)         │  ← New state!
        └───────────────────────────────────────────────────────────┘
      │
      ▼
 [T3] User clicks "Leave"
      │
      ▼
-[T4] state_A.isNavigationConfirmed = true set
-     │  (but popstateHandler_A is already released!)
+[T4] state_A confirmation set
+     │  (but interceptPopstate_A is already released!)
      │
      ▼
 [T5] history.go(delta) called → URL changes
      │
      ▼
-[T6] New popstate fired → popstateHandler_B called (currently registered handler)
+[T6] New popstate fired → interceptPopstate_B called (currently registered handler)
      │
      ▼
-[T7] state_B.isNavigationConfirmed === false → beforePopState returns false
+[T7] state_B.next-navigation confirmation === false → beforePopState returns false
      │
      ▼
 [T8] URL is at previous page, but Next.js doesn't update page ❌
@@ -192,9 +201,9 @@ Time →
 │                    Stable preRegisteredHandler                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  popstateHandler_A (state_A)                                        │
+│  interceptPopstate_A (state_A)                                        │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │ state_A.isNavigationConfirmed = false → true                │   │
+│  │ state_A confirmation = false → true                │   │
 │  │                                   ↑                         │   │
 │  │ [T1]                           [T4]                   [T7]  │   │
 │  │  call ─────────────────────────  set ──────────────── check │   │
@@ -206,10 +215,10 @@ Time →
 │                   Unstable preRegisteredHandler                      │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  popstateHandler_A (released)     popstateHandler_B (newly created)  │
+│  interceptPopstate_A (released)     interceptPopstate_B (newly created)  │
 │  ┌────────────────────────┐   ┌────────────────────────────────┐   │
 │  │ state_A                │   │ state_B                        │   │
-│  │ .isNavigationConfirmed │   │ .isNavigationConfirmed         │   │
+│  │ .next-navigation confirmation │   │ .next-navigation confirmation         │   │
 │  │ = false → true         │   │ = false                        │   │
 │  │      ↑                 │   │                           ↑    │   │
 │  │ [T1] [T4]              │   │                          [T7]  │   │
@@ -304,10 +313,10 @@ function useCurrentOverlayRef() {
 > When `preRegisteredHandler` changes:
 >
 > 1. **Effect re-runs** (because it's in deps)
-> 2. **New `popstateHandler` closure created** (`createPopstateHandler` called)
-> 3. **New `interceptionStateContext` created** (all state reset)
+> 2. **New `interceptPopstate` closure created** (`createPopstateInterceptor` called)
+> 3. **New `interceptionState` created** (all state reset)
 > 4. State set by previous async handler **only exists in previous closure**
-> 5. New popstate checks **new closure's state** → `isNavigationConfirmed === false` → blocked
+> 5. New popstate checks **new closure's state** → `next-navigation confirmation === false` → blocked
 >
 > **Therefore, maintaining stable reference with `useCallback(fn, [])` is essential.**
 
@@ -317,5 +326,5 @@ function useCurrentOverlayRef() {
 
 - `src/BackNavigationHandlerProvider.tsx` - Provider component
 - `src/useInterceptPopState.ts` - effect deps includes `preRegisteredHandler`
-- `src/useInterceptPopState.helper/interception-state.ts` - `isNavigationConfirmed` state management
+- `src/useInterceptPopState.helper/interception-state.ts` - `next-navigation confirmation` state management
 - `example/src/pages/_app.tsx` - `useCallback` applied, `useCurrentOverlayRef` pattern usage example

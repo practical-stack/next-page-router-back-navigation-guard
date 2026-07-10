@@ -1,35 +1,23 @@
 /**
- * Interception State Management
+ * 내부 back 탐색과 session boundary 탐색이 함께 사용하는 확인 flag를 보관한다.
+ * handler가 replay를 승인하면, 그 결과로 발생한 다음 popstate는 handler를 다시 실행하지 않고
+ * 통과해야 한다.
  *
- * Holds isNavigationConfirmed — the *shared* flag used by BOTH the normal-back and the
- * session-boundary paths: it says the next self-induced popstate (the one our
- * history.back()/go() is about to trigger) should be allowed through without re-running
- * handlers. The other interception concern lives in its own module because it is scoped to
- * a single path:
- * - pending-handler-restore.ts — the normal-back deferred restore.
- *
- * Uses closure-based state, not React state, for synchronous access inside event handlers.
+ * 의도적으로 closure state를 사용한다. `beforePopState`는 동기적으로 접근해야 하며
+ * React state update를 기다릴 수 없기 때문이다.
  */
-
-export interface InterceptionState {
-  /**
-   * True when a handler has approved navigation.
-   * The next popstate event (triggered by our history.back/go call)
-   * should be allowed through without re-running handlers.
-   */
-  isNavigationConfirmed: boolean;
-}
-
-export function createInterceptionStateContext() {
-  let state: InterceptionState = {
-    isNavigationConfirmed: false,
-  };
+export function createInterceptionState() {
+  let isConfirmed = false;
 
   return {
-    getState: (): InterceptionState => ({ ...state }),
+    isNextNavigationConfirmed: (): boolean => isConfirmed,
 
-    setState: (updates: Partial<InterceptionState>): void => {
-      state = { ...state, ...updates };
+    confirmNextNavigation: (): void => {
+      isConfirmed = true;
+    },
+
+    consumeConfirmation: (): void => {
+      isConfirmed = false;
     },
   };
 }

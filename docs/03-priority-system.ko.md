@@ -237,7 +237,7 @@ useRegisterBackNavigationHandler(
 1. 첫 번째 뒤로가기 → 핸들러가 다이얼로그 표시 → 사용자 "취소" 클릭 → 핸들러 삭제됨, 네비게이션 차단
 2. 두 번째 뒤로가기 → 핸들러 없음 → 네비게이션 진행 (또는 preRegisteredHandler가 등록되어 있으면 실행)
 
-**페이지 새로고침 후 (token mismatch 시나리오)**:
+**페이지 새로고침 후**:
 
 `once: true` 옵션을 사용할 때 페이지 새로고침 후에는 핸들러와 `preRegisteredHandler`가 함께 동작합니다:
 

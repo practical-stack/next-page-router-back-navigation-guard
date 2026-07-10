@@ -33,7 +33,7 @@
 
 | 옵션 | 기본값 | 설명 |
 |------|--------|------|
-| `override` | `false` | 우선순위 핸들러 (일반 핸들러보다 먼저 실행) |
+| `override` | `false` | 일반 핸들러보다 먼저 실행되는 우선순위 핸들러로 등록할지 여부 |
 | `overridePriority` | `1` | 우선순위 레벨 0-3 (낮을수록 높은 우선순위) |
 | `enable` | `true` | 조건부 등록 |
 | `once` | `false` | 실행 후 자동 해제 |
@@ -43,7 +43,7 @@
 | 파일 | 역할 |
 |------|------|
 | `src/useRegisterBackNavigationHandler.ts` | 핸들러 등록 훅 |
-| `src/useInterceptPopState.ts` | Popstate 인터셉션 (핵심) |
+| `src/useInterceptPopState.ts` | 인터셉터를 Next.js `beforePopState`에 연결 |
 | `src/BackNavigationHandlerProvider.tsx` | Provider 컴포넌트 |
 
 #### Helper 모듈 (`src/useInterceptPopState.helper/`)
@@ -52,11 +52,13 @@
 |------|------|
 | `history-augmentation.ts` | History API 패치 (index/token 주입) |
 | `interception-state.ts` | 공용 인터셉션 플래그 (`isNavigationConfirmed`) |
-| `rendered-state-context.ts` | 현재 historyIndex와 sessionToken 추적 |
+| `pending-navigation.ts` | URL 복원 중 원래 뒤로가기 delta 보관 |
+| `popstate-interceptor.ts` | popstate 분류와 복원/재실행 핵심 흐름 |
+| `rendered-history-entry-metadata-store.ts` | 현재 렌더링된 entry의 history index와 session token 추적 |
 | `parse-history-state.ts` | history.state에서 token/index 추출 |
 | `handler-execution.ts` | 핸들러 체인 실행 및 네비게이션 결정 |
 | `sort-handlers.ts` | 우선순위 기반 핸들러 정렬 |
-| `types.ts` | TypeScript 타입 (`RenderedState`, `NextHistoryState`) |
+| `types.ts` | TypeScript 타입 (`RenderedHistoryEntryMetadata`, `NextHistoryState`) |
 
 ---
 

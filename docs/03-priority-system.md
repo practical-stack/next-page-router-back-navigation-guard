@@ -237,7 +237,7 @@ Scenario:
 1. First back → handler shows dialog → user clicks "Cancel" → handler removed, navigation blocked
 2. Second back → no handler exists → navigation proceeds (or preRegisteredHandler runs if registered)
 
-**After page refresh (token mismatch scenario)**:
+**After page refresh**:
 
 When using `once: true` after a page refresh, the behavior involves both the handler and `preRegisteredHandler`:
 

@@ -1,34 +1,36 @@
 /**
- * History API Augmentation
+ * History API 확장
  *
- * The History API exposes no stack index, so there's no native way to tell how far a
- * navigation moved or whether it was back or forward. (The Navigation API has
- * `navigation.currentEntry.index`, but Safari/Firefox don't support it.)
+ * History API는 stack index를 노출하지 않으므로 한 번의 history 이동에서 몇 개의
+ * history entry를 건너갔는지와 이동 방향이 back인지 forward인지 기본 기능만으로는 알 수 없다.
+ * (Navigation API에는 `navigation.currentEntry.index`가 있지만 Safari/Firefox는 지원하지 않는다.)
  *
- * Workaround: monkey-patch `history.pushState` / `history.replaceState` to inject our own
- * metadata into `history.state`:
- * - `__next_navigation_stack_index` — position in the stack (delta tells back from forward)
- * - `__next_session_token` — identifies the session (detects refresh / external entry)
+ * 해결 방법: `history.pushState` / `history.replaceState`를 monkey-patch하여 자체 metadata를
+ * `history.state`에 주입한다.
+ * - `__next_navigation_stack_index` — stack 내 위치(delta로 back과 forward를 구분)
+ * - `__next_session_token` — session 식별자(refresh / 외부 history entry 감지)
  *
- * @see docs/01-why-this-library.md for the detailed explanation
+ * @see 자세한 설명은 docs/01-why-this-library.md 참고
  */
 
-import { RenderedState } from "./types";
+import type { RenderedHistoryEntryMetadata } from "./types";
 import { DEBUG, debug } from "../@shared/debug";
 
 const SESSION_TOKEN_KEY = "__next_session_token";
 const STACK_INDEX_KEY = "__next_navigation_stack_index";
 
-// Capture the previous session's token + index at MODULE-EVALUATION time.
+// 이전 session에서 우리가 기록한 metadata를 MODULE-EVALUATION 시점에 저장한다.
 //
-// The browser preserves the entry's history.state across a reload until ~the `load` event;
-// Next.js Pages Router overwrites it slightly later, during router hydration (when our
-// provider mounts). So a read at provider-mount time only sees Next's token-less rewrite.
-// Module evaluation runs earlier — before hydration — so the previous token is still here.
+// browser는 reload 후 대략 `load` event까지 history entry의 history.state를 보존한다.
+// Next.js Pages Router는 조금 뒤의 router hydration(provider가 mount되는 시점)에 이를
+// 덮어쓴다. 이 과정에서 우리가 기록한 session token과 stack index metadata가 사라지므로,
+// provider mount 시점에 `history.state`를 읽으면 Next.js가 덮어쓴 state만 보인다.
+// Module evaluation은 hydration보다 먼저 실행되므로 이 시점에는 우리가 기록한
+// session token과 stack index metadata가 모두 남아 있다.
 //
-// Recovering it lets the refreshed entry rejoin its original session, keeping back/forward
-// distinguishable by index instead of every post-refresh popstate looking like a boundary.
-const _capturedSessionStateAtModuleLoad: RenderedState | null =
+// 이를 복구하면 refresh된 history entry가 원래 session에 다시 합류하므로, refresh 이후의 모든
+// popstate를 boundary로 취급하지 않고 index를 통해 back/forward를 구분할 수 있다.
+const _capturedRenderedHistoryEntryMetadataAtModuleLoad: RenderedHistoryEntryMetadata | null =
   typeof window !== "undefined" &&
   window.history &&
   window.history.state &&
@@ -39,103 +41,145 @@ const _capturedSessionStateAtModuleLoad: RenderedState | null =
       }
     : null;
 
-// Module-level singleton state
+// 모듈 수준의 singleton state
 let _isHistoryStateSyncInitialized = false;
-let _renderedState: RenderedState = { historyIndex: -1, sessionToken: "" };
-let _setRenderedStateAndSyncToHistory: (params: {
-  renderedState: RenderedState;
-  shouldSyncToHistory: boolean;
-}) => void = () => {};
+let _renderedHistoryEntryMetadata: RenderedHistoryEntryMetadata = {
+  historyIndex: -1,
+  sessionToken: "",
+};
 
 /**
- * Generates a random session token for a brand-new session.
+ * 새로운 session을 위한 무작위 session token을 생성한다.
  *
- * Used only when there is no prior session to recover — a genuine first visit, or a
- * pushState/replaceState that runs before any token exists. After a refresh the previous
- * token is instead restored at module-eval (see _capturedSessionStateAtModuleLoad).
+ * 복구할 이전 session이 없는 실제 최초 방문이나 token이 생기기 전에 실행된
+ * pushState/replaceState에서만 사용한다. refresh 후에는 이전 token을 module evaluation
+ * 시점에 복원한다(_capturedRenderedHistoryEntryMetadataAtModuleLoad 참고).
  */
 export function generateSessionToken(): string {
   return Math.random().toString(36).substring(2);
 }
 
 /**
- * Returns an immutable copy of the current rendered state.
+ * 현재 rendered history entry metadata의 immutable copy를 반환한다.
  */
-export function getRenderedState(): RenderedState {
-  return { ..._renderedState };
+export function getRenderedHistoryEntryMetadata(): RenderedHistoryEntryMetadata {
+  return { ..._renderedHistoryEntryMetadata };
 }
 
 /**
- * Updates the module-level rendered state (immutable update).
+ * module-level rendered history entry metadata를 immutable 방식으로 갱신한다.
  */
-function setRenderedState(renderedState: RenderedState): void {
-  _renderedState = { ...renderedState };
+function setRenderedHistoryEntryMetadata(
+  nextRenderedHistoryEntryMetadata: RenderedHistoryEntryMetadata
+): void {
+  _renderedHistoryEntryMetadata = { ...nextRenderedHistoryEntryMetadata };
 }
 
 /**
- * Merges our tracking metadata into a history.state object.
+ * 자체 tracking metadata를 history.state object에 병합한다.
+ * primitive state 값에는 metadata를 추가할 수 없으므로 object로 대체한다.
  */
-function withTrackingMetadata(
-  historyState: any,
-  { sessionToken, historyIndex }: RenderedState
-) {
+function withTrackingMetadata({
+  historyState,
+  renderedHistoryEntryMetadata,
+}: {
+  historyState: unknown;
+  renderedHistoryEntryMetadata: RenderedHistoryEntryMetadata;
+}) {
+  const { sessionToken, historyIndex } = renderedHistoryEntryMetadata;
+  const existingState = isRecord(historyState) ? historyState : {};
+
   return {
-    ...historyState,
+    ...existingState,
     [SESSION_TOKEN_KEY]: sessionToken,
     [STACK_INDEX_KEY]: historyIndex,
   };
 }
 
 /**
- * Builds a replacement for history.pushState / history.replaceState that keeps our
- * rendered state in sync and stamps tracking metadata onto every entry.
+ * 자체 rendered history entry metadata를 동기화하고 모든 history entry에 tracking metadata를
+ * 기록하도록 history.pushState / history.replaceState의 대체 함수를 만든다.
  *
- * pushState advances the index by one; replaceState keeps it. Both start a fresh session
- * if none exists yet.
+ * pushState는 index를 1 증가시키고 replaceState는 유지한다. 아직 session이 없으면
+ * 두 함수 모두 새 session을 시작한다.
  */
-function createPatchedHistoryMethod(
-  original: History["pushState"],
-  advanceIndex: boolean
-): History["pushState"] {
+function createPatchedHistoryMethod({
+  original,
+  methodKind,
+}: {
+  original: History["pushState"];
+  methodKind: "pushState" | "replaceState";
+}): History["pushState"] {
   return function (this: History, historyState, unused, url) {
-    const current = getRenderedState();
-    const next: RenderedState = current.sessionToken
-      ? {
-          sessionToken: current.sessionToken,
-          historyIndex: current.historyIndex + (advanceIndex ? 1 : 0),
-        }
-      : { sessionToken: generateSessionToken(), historyIndex: 0 };
+    const currentRenderedHistoryEntryMetadata = getRenderedHistoryEntryMetadata();
+    const indexIncrement = methodKind === "pushState" ? 1 : 0;
+    const nextRenderedHistoryEntryMetadata: RenderedHistoryEntryMetadata =
+      currentRenderedHistoryEntryMetadata.sessionToken
+        ? {
+            sessionToken: currentRenderedHistoryEntryMetadata.sessionToken,
+            historyIndex:
+              currentRenderedHistoryEntryMetadata.historyIndex + indexIncrement,
+          }
+        : { sessionToken: generateSessionToken(), historyIndex: 0 };
 
-    setRenderedState(next);
-    debug(
-      `history.${advanceIndex ? "pushState" : "replaceState"}: index=${next.historyIndex}, token=${next.sessionToken}`
+    original.call(
+      this,
+      withTrackingMetadata({
+        historyState,
+        renderedHistoryEntryMetadata: nextRenderedHistoryEntryMetadata,
+      }),
+      unused,
+      url
     );
-    original.call(this, withTrackingMetadata(historyState, next), unused, url);
+    setRenderedHistoryEntryMetadata(nextRenderedHistoryEntryMetadata);
+    debug(
+      `history.${methodKind}: index=${nextRenderedHistoryEntryMetadata.historyIndex}, token=${nextRenderedHistoryEntryMetadata.sessionToken}`
+    );
   };
 }
 
 /**
- * Initializes history state synchronization (singleton — runs once).
+ * 원본 replaceState를 사용하여 현재 history entry에 rendered history entry metadata를 기록한다.
+ */
+function syncRenderedHistoryEntryMetadataToCurrentEntry({
+  originalReplaceState,
+  nextRenderedHistoryEntryMetadata,
+}: {
+  originalReplaceState: History["replaceState"];
+  nextRenderedHistoryEntryMetadata: RenderedHistoryEntryMetadata;
+}): void {
+  originalReplaceState.call(
+    window.history,
+    withTrackingMetadata({
+      historyState: window.history.state,
+      renderedHistoryEntryMetadata: nextRenderedHistoryEntryMetadata,
+    }),
+    "",
+    window.location.href
+  );
+}
+
+/**
+ * history state 동기화를 초기화한다(singleton — 한 번만 실행).
  *
- * Recovers the previous session if one was captured at module-eval, otherwise starts a
- * fresh one; seeds the current entry with metadata; and patches pushState/replaceState so
- * every subsequent entry is stamped.
+ * module evaluation 시점에 저장한 이전 session이 있으면 복구하고, 없으면 새 session을
+ * 시작한다. 현재 history entry에 metadata를 기록하고 이후 모든 history entry에도 기록되도록
+ * pushState/replaceState를 patch한다.
  *
- * @returns Object with setRenderedStateAndSyncToHistory function
+ * @returns 메모리상의 포인터를 현재 렌더링 중인 history entry로 이동하는 action
  */
 export function initializeHistoryStateSyncOnce(): {
-  setRenderedStateAndSyncToHistory: (params: {
-    renderedState: RenderedState;
-    shouldSyncToHistory: boolean;
-  }) => void;
+  setRenderedHistoryEntryMetadata: (
+    renderedHistoryEntryMetadata: RenderedHistoryEntryMetadata
+  ) => void;
 } {
   if (_isHistoryStateSyncInitialized) {
-    return { setRenderedStateAndSyncToHistory: _setRenderedStateAndSyncToHistory };
+    return { setRenderedHistoryEntryMetadata };
   }
 
   debug("initializeHistoryStateSyncOnce: initializing");
 
-  // Store original methods before patching
+  // patch하기 전에 원본 method를 저장한다.
   const originalHistoryPushState = window.history.pushState;
   const originalHistoryReplaceState = window.history.replaceState;
 
@@ -146,55 +190,52 @@ export function initializeHistoryStateSyncOnce(): {
     };
   }
 
-  // Recover the captured session (refresh) or start fresh (genuine first visit).
-  if (_capturedSessionStateAtModuleLoad) {
-    setRenderedState(_capturedSessionStateAtModuleLoad);
+  // 저장된 session을 복구하거나(refresh), 새로운 session을 시작한다(실제 최초 방문).
+  if (_capturedRenderedHistoryEntryMetadataAtModuleLoad) {
+    setRenderedHistoryEntryMetadata(_capturedRenderedHistoryEntryMetadataAtModuleLoad);
   } else {
-    setRenderedState({ historyIndex: 0, sessionToken: generateSessionToken() });
+    setRenderedHistoryEntryMetadata({
+      historyIndex: 0,
+      sessionToken: generateSessionToken(),
+    });
   }
   debug(
-    `initializeHistoryStateSyncOnce: initial index=${getRenderedState().historyIndex}, token=${getRenderedState().sessionToken}`
+    `initializeHistoryStateSyncOnce: initial index=${getRenderedHistoryEntryMetadata().historyIndex}, token=${getRenderedHistoryEntryMetadata().sessionToken}`
   );
 
-  _setRenderedStateAndSyncToHistory = ({ renderedState, shouldSyncToHistory }) => {
-    debug(
-      `setRenderedStateAndSyncToHistory: index=${renderedState.historyIndex}, token=${renderedState.sessionToken}, sync=${shouldSyncToHistory}`
-    );
-
-    setRenderedState(renderedState);
-
-    if (shouldSyncToHistory) {
-      originalHistoryReplaceState.call(
-        window.history,
-        withTrackingMetadata(window.history.state, renderedState),
-        "",
-        window.location.href
-      );
-    }
-  };
-
-  // Seed metadata onto the current entry. The patched push/replace only stamp entries
-  // created after patching, so the entry the user is already on has none. After a refresh
-  // this re-stamps the RESTORED session (otherwise the recovered token would live only in
-  // memory, with the on-disk entry still token-less); on a first visit it stamps the fresh
-  // { index: 0, token }. In Next.js the guard is effectively always true (Next wipes the
-  // metadata during init); it's kept for non-Next environments that may already carry it.
-  // `== null` matches both null and undefined (a missing key reads back as undefined).
+  // 현재 history entry에 metadata를 초기 기록한다. patch된 push/replace는 patch 이후 생성된
+  // history entry에만 기록하므로 사용자가 이미 머물고 있는 history entry에는 metadata가 없다.
+  // refresh 후에는 복원된 session을 다시 기록한다. 그러지 않으면 복구한 token은 메모리에만 있고
+  // 저장된 history entry에는 여전히 token이 없다. 최초 방문이라면 새로운
+  // { index: 0, token }을 기록한다.
+  // Next.js는 초기화 중 metadata를 지우므로 이 guard는 사실상 항상 true지만, 이미 metadata가
+  // 있을 수 있는 non-Next 환경을 위해 유지한다. `== null`은 null과 undefined를 모두 확인한다
+  // (존재하지 않는 key를 읽으면 undefined가 반환된다).
   if (
     !window.history.state ||
     window.history.state[STACK_INDEX_KEY] == null ||
     window.history.state[SESSION_TOKEN_KEY] == null
   ) {
-    _setRenderedStateAndSyncToHistory({
-      renderedState: getRenderedState(),
-      shouldSyncToHistory: true,
+    syncRenderedHistoryEntryMetadataToCurrentEntry({
+      originalReplaceState: originalHistoryReplaceState,
+      nextRenderedHistoryEntryMetadata: getRenderedHistoryEntryMetadata(),
     });
   }
 
-  window.history.pushState = createPatchedHistoryMethod(originalHistoryPushState, true);
-  window.history.replaceState = createPatchedHistoryMethod(originalHistoryReplaceState, false);
+  window.history.pushState = createPatchedHistoryMethod({
+    original: originalHistoryPushState,
+    methodKind: "pushState",
+  });
+  window.history.replaceState = createPatchedHistoryMethod({
+    original: originalHistoryReplaceState,
+    methodKind: "replaceState",
+  });
 
   _isHistoryStateSyncInitialized = true;
 
-  return { setRenderedStateAndSyncToHistory: _setRenderedStateAndSyncToHistory };
+  return { setRenderedHistoryEntryMetadata };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

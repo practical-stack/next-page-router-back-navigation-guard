@@ -33,7 +33,7 @@ The documents are organized to tell a complete story. Read in order for best und
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `override` | `false` | Priority handler (executes before normal handlers) |
+| `override` | `false` | Whether to register a priority handler that executes before the normal handler |
 | `overridePriority` | `1` | Priority level 0-3 (lower = higher priority) |
 | `enable` | `true` | Conditional registration |
 | `once` | `false` | Auto-unregister after execution |
@@ -43,7 +43,7 @@ The documents are organized to tell a complete story. Read in order for best und
 | File | Purpose |
 |------|---------|
 | `src/useRegisterBackNavigationHandler.ts` | Handler registration hook |
-| `src/useInterceptPopState.ts` | Popstate interception (core) |
+| `src/useInterceptPopState.ts` | Connect the interceptor to Next.js `beforePopState` |
 | `src/BackNavigationHandlerProvider.tsx` | Provider component |
 
 #### Helper Modules (`src/useInterceptPopState.helper/`)
@@ -52,11 +52,13 @@ The documents are organized to tell a complete story. Read in order for best und
 |------|---------|
 | `history-augmentation.ts` | History API patching (index/token injection) |
 | `interception-state.ts` | Shared interception flag (`isNavigationConfirmed`) |
-| `rendered-state-context.ts` | Track current historyIndex and sessionToken |
+| `pending-navigation.ts` | Store the back-navigation delta while the URL is restored |
+| `popstate-interceptor.ts` | Core popstate classification and restore/replay flow |
+| `rendered-history-entry-metadata-store.ts` | Track the rendered entry's history index and session token |
 | `parse-history-state.ts` | Extract token/index from history.state |
 | `handler-execution.ts` | Run handler chain and determine navigation |
 | `sort-handlers.ts` | Priority-based handler sorting |
-| `types.ts` | TypeScript types (`RenderedState`, `NextHistoryState`) |
+| `types.ts` | TypeScript types (`RenderedHistoryEntryMetadata`, `NextHistoryState`) |
 
 ---
 

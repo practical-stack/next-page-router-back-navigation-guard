@@ -1,42 +1,33 @@
-/**
- * History State Parsing
- *
- * Utilities for parsing and validating history.state metadata
- * injected by the history augmentation module.
- */
-
 import type { NextHistoryState } from "./types";
 
-export interface ParsedHistoryState {
-  nextSessionToken: string | undefined;
-  nextHistoryIndex: number;
-}
-
 /**
- * Parses custom metadata from history.state.
- * Returns undefined token if not present (indicates a missing/older entry without our metadata).
+ * history-augmentation이 주입한 tracking metadata를 읽는다. session token이 없거나 현재 렌더링된
+ * history entry의 token과 일치하지 않으면 session boundary로 판별할 수 있도록, 누락된 token은
+ * `undefined`로 유지한다.
  */
-export function parseHistoryState(historyState: NextHistoryState = {}): ParsedHistoryState {
+export function parseHistoryState(historyState: NextHistoryState = {}): {
+  sessionToken: string | undefined;
+  historyIndex: number;
+} {
   return {
-    nextSessionToken: historyState.__next_session_token,
-    nextHistoryIndex: Number(historyState.__next_navigation_stack_index) || 0,
+    sessionToken: historyState.__next_session_token,
+    historyIndex: Number(historyState.__next_navigation_stack_index) || 0,
   };
 }
 
 /**
- * Checks if there's a session token mismatch.
- *
- * After a page refresh the previous token is restored at module-evaluation time
- * (history-augmentation.ts reads history.state before Next.js router hydration
- * overwrites it), so a normal refresh no longer triggers a mismatch.
- *
- * Mismatch indicates a genuine session boundary:
- * - Token is missing (first visit, older entry without our metadata)
- * - Token doesn't match current session (genuine session boundary, e.g. cross-session entry)
+ * 다음과 같이 현재 앱 session의 index로 이동 방향을 계산할 수 없는 entry를 session boundary로
+ * 간주한다.
+ * - 검색 결과에서 앱에 진입한 뒤 다시 검색 결과로 돌아가는 경우: token metadata가 없다.
+ * - 마이크로 프론트엔드 환경에서 같은 페이지라도 서로 다른 앱 인스턴스가 라이브러리를 각각
+ *   초기화한 entry 사이를 이동하는 경우: 현재와 token이 다르다.
  */
-export function hasSessionTokenMismatch(
-  nextSessionToken: string | undefined,
-  currentSessionToken: string
-): boolean {
+export function isSessionBoundary({
+  nextSessionToken,
+  currentSessionToken,
+}: {
+  nextSessionToken: string | undefined;
+  currentSessionToken: string;
+}): boolean {
   return !nextSessionToken || nextSessionToken !== currentSessionToken;
 }

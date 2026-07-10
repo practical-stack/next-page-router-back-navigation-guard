@@ -48,13 +48,15 @@ Next.js Pages Router의 `beforePopState` 콜백을 사용하여 뒤로가기/앞
 popstate event fired
     │
     ▼
-handler callback executed (e.g., confirm dialog)
+delta -1 저장 후 history.go(1)로 Page2 URL 복원
     │
-    ├── User selects "Cancel"
-    │     └→ history.go(1) called → Stay on Page2
+    ▼
+delta = 0 복원 popstate 도착 (또는 완료 fallback 실행)
     │
-    └── User selects "OK"
-          └→ popstate re-dispatched → Navigate to Page1
+    ▼
+handler callback 실행 (예: 확인 dialog)
+    ├── "취소" → 복원된 Page2에 머무름
+    └── "확인" → history.go(-1) → confirmed popstate 통과 → Page1 이동
 ```
 
 | 항목 | 값 |
@@ -99,10 +101,12 @@ Right-click back button → Select "Page1" from history menu
 delta = 0 - 3 = -3
     │
     ▼
-handler callback executed
+delta -3 저장 후 history.go(3)으로 Page4 URL 복원
     │
-    ├── Cancel → history.go(3) → Stay on Page4
-    └── OK → Navigate to Page1
+    ▼
+복원 완료 후 handler callback 실행
+    ├── 취소 → Page4에 머무름
+    └── 확인 → history.go(-3) → Page1 이동
 ```
 
 이런 경우가 발생하는 상황:
@@ -146,15 +150,18 @@ isNavigationConfirmed 플래그 확인
     history.go(1) 호출 → URL 복원 (앞으로 이동)
           │
           ▼
-    requestAnimationFrame + setTimeout: 비동기 handler 콜백 실행
+    token이 일치하는 복원 popstate가 delta === 0에 도착
+    (또는 requestAnimationFrame + setTimeout fallback 실행)
+          │
+          ▼
+    pending navigation을 consume하고 비동기 handler callback 실행
           │
           ├── Cancel (handler가 false 반환)
           │     └→ 현재 페이지 유지
           │
           └── OK (handler가 true 반환)
-                └→ 새 token/index 설정
                 └→ isNavigationConfirmed = true  ← 중요: back() 호출 전에 설정
-                └→ window.history.back() 재호출
+                └→ window.history.go(-1) 재호출
                 └→ 다음 popstate에서 isNavigationConfirmed=true 확인
                 └→ 이전 페이지로 이동
 ```
@@ -174,10 +181,10 @@ isNavigationConfirmed 플래그 확인
 - 일반적인 새로고침 후 현재 항목은 원래 세션에 다시 합류하므로 token이 **일치**하고, 뒤로가기는 내부 경로(시나리오 6)로 처리됨
 
 **isNavigationConfirmed 플래그**:
-- handler가 네비게이션을 허용하면 (true 반환) `history.back()` 호출
+- handler가 네비게이션을 허용하면 저장된 delta를 `history.go(-1)`로 재실행
 - 이는 또 다른 popstate 이벤트를 발생시키고, 다시 token mismatch로 감지됨
 - `isNavigationConfirmed` 플래그로 이 후속 popstate를 허용 처리
-- **중요**: 플래그는 반드시 `history.back()` 호출 전에 설정해야 함
+- **중요**: confirmation은 반드시 `history.go(-1)` 호출 전에 설정해야 함
 
 **핸들러 콜백에 `requestAnimationFrame + setTimeout`을 사용하는 이유?**
 
@@ -185,12 +192,12 @@ token mismatch 경로와 내부 뒤로가기 경로(시나리오 6) 모두 `requ
 
 - 페이지 새로고침 후, Next.js는 라이브러리가 발행하는 합성 `history.go()` 복원에 대해 `beforePopState`를 **호출하지 않음**
 - 따라서 `history.go()` 완료를 알리는 `delta === 0` 후속 popstate가 도착하지 않음
-- 이 신호 없이는 `pendingHandlerExecution` 플래그가 소비되지 않아 핸들러가 실행되지 않음
+- 이 신호 없이는 pending navigation이 소비되지 않아 핸들러가 실행되지 않음
 
-rAF+setTimeout 폴백은 브라우저가 안정화된 후 핸들러를 정확히 한 번 실행합니다(`pendingHandlerExecution` 플래그로 이중 실행을 방지):
+rAF+setTimeout 폴백은 브라우저가 안정화된 후 핸들러를 정확히 한 번 실행합니다(`pendingNavigation.consume()`이 이중 실행을 방지):
 1. `requestAnimationFrame` — 현재 페인트 이후, 브라우저 히스토리가 안정화된 후로 지연
 2. `setTimeout(0)` — 남은 microtask와 대기 중인 이벤트 처리 완료
-3. `pendingHandlerExecution` 플래그 — popstate와 폴백 중 어느 쪽이 먼저 실행되든 정확히 한 번만 실행 보장
+3. `pendingNavigation.consume()` — pending delta를 원자적으로 반환하고 비워 먼저 도착한 완료 경로만 handler 실행
 
 **외부 도메인 진입은 인터셉트 가능한 케이스가 아닙니다**:
 
@@ -325,7 +332,7 @@ useRegisterBackNavigationHandler(() => {
 1. 뒤로가기 감지 (delta < 0)
     │
     ▼
-2. pendingHandlerExecution = true 설정, pendingHistoryIndexDelta 저장
+2. pendingNavigation = true 설정, pending navigation delta 저장
     │
     ▼
 3. URL 복원을 위해 history.go(-delta) 호출
@@ -337,7 +344,7 @@ useRegisterBackNavigationHandler(() => {
 5. delta = 0인 popstate 발생 (복원 완료)
     │
     ▼
-6. pendingHandlerExecution === true 확인
+6. pendingNavigation === true 확인
     │
     ▼
 7. 이제 안전하게 핸들러 실행
@@ -346,10 +353,10 @@ useRegisterBackNavigationHandler(() => {
     │   → 정상 작동, 히스토리 스택 유지
     │
     └── 핸들러가 true 반환
-        → history.go(pendingHistoryIndexDelta) 호출하여 뒤로 이동
+        → history.go(pending navigation delta) 호출하여 뒤로 이동
 ```
 
-**페이지 새로고침 후에는 `delta = 0` popstate가 도착하지 않습니다.** 새로고침 이후 Next.js는 라이브러리의 합성 `history.go()` 복원에 대해 `beforePopState`를 호출하지 않으므로, 위의 5단계가 실행되지 않습니다. 이 경우를 처리하기 위해 3단계에서 `requestAnimationFrame(() => setTimeout(..., 0))` 폴백도 함께 예약됩니다. 동일한 `pendingHandlerExecution` 플래그를 통해 핸들러를 정확히 한 번 실행하며, popstate와 폴백 중 먼저 실행된 쪽이 플래그를 소비하면 나머지는 no-op이 됩니다.
+**페이지 새로고침 후에는 `delta = 0` popstate가 도착하지 않습니다.** 새로고침 이후 Next.js는 라이브러리의 합성 `history.go()` 복원에 대해 `beforePopState`를 호출하지 않으므로, 위의 5단계가 실행되지 않습니다. 이 경우를 처리하기 위해 3단계에서 `requestAnimationFrame(() => setTimeout(..., 0))` 폴백도 함께 예약됩니다. 동일한 `pendingNavigation` 플래그를 통해 핸들러를 정확히 한 번 실행하며, popstate와 폴백 중 먼저 실행된 쪽이 플래그를 소비하면 나머지는 no-op이 됩니다.
 
 > **MDN 참조**: "이 메서드는 비동기입니다. popstate 이벤트 리스너를 추가하여 네비게이션 완료 시점을 알 수 있습니다."
 > — [MDN Web Docs: History.go()](https://developer.mozilla.org/en-US/docs/Web/API/History/go)
@@ -358,8 +365,8 @@ useRegisterBackNavigationHandler(() => {
 
 | 상태 | 목적 |
 |------|------|
-| `pendingHandlerExecution` | history.go() 완료 대기 중일 때 true |
-| `pendingHistoryIndexDelta` | 핸들러 승인 후 네비게이션을 위한 저장된 delta |
+| `pendingNavigation` | history.go() 완료 대기 중일 때 true |
+| `pending navigation delta` | 핸들러 승인 후 네비게이션을 위한 저장된 delta |
 
 ---
 
@@ -381,14 +388,14 @@ useRegisterBackNavigationHandler(() => {
 
 ## 내부 처리 시나리오
 
-### 시나리오 7: Delta가 0인 경우 (핸들러 실행 대기 또는 복원)
+### 시나리오 7: Delta가 0인 경우 (복원 완료)
 
-차단 후 `history.go(-delta)` 호출 시 delta = 0인 popstate가 발생합니다. 이는 다음을 의미할 수 있습니다:
-1. **핸들러 실행 대기**: URL 복원 완료, 이제 핸들러 실행
-2. **단순 복원**: 무시 (무한 루프 방지)
+URL 복원을 시작한 후 `history.go(-delta)` 호출 시 delta = 0인 popstate가 발생합니다. 의미는 pending navigation 유무에 따라 달라집니다:
+1. **Pending navigation 존재**: URL 복원이 완료됐으므로 이를 consume하고 handler를 실행합니다.
+2. **Pending navigation 없음**: fallback이 이미 navigation을 consume한 뒤 늦게 도착한 복원 echo이므로 무시합니다.
 
 ```
-User back → handler cancel → history.go(1) called
+사용자 back → delta -1 저장 → history.go(1) 호출
     │
     ▼
 popstate re-fired
@@ -397,12 +404,12 @@ popstate re-fired
 delta = currentIndex - currentIndex = 0
     │
     ▼
-Event ignored (infinite loop prevention)
+pending navigation 존재 → consume → handler 실행
 ```
 
 ### 시나리오 8: Token Mismatch 복원 Popstate
 
-Token mismatch 차단 시 `history.go(1)` 호출로 또 다른 popstate가 발생합니다. 이 복원은 token이 일치하는 항목으로 되돌아오므로, echo popstate는 내부 네비게이션 경로로 라우팅되어 `delta === 0` 분기(시나리오 7과 동일한 메커니즘)에서 무시됩니다 — 별도 플래그가 필요 없습니다.
+Session boundary를 guard할 때 `history.go(1)` 호출로 또 다른 popstate가 발생합니다. 이 복원은 token이 일치하는 항목으로 되돌아오므로 echo는 내부 네비게이션 경로로 라우팅됩니다. `delta === 0` 분기는 pending navigation을 consume하고 handler를 실행하며(시나리오 7과 동일), boundary 전용 복원 플래그는 필요하지 않습니다.
 
 ```
 Token Mismatch detected → history.go(1) called
@@ -414,7 +421,7 @@ popstate re-fired (by go(1)) → token 일치 항목으로 착지
 내부 네비게이션으로 라우팅 → delta === 0
     │
     ▼
-이벤트 무시 (시나리오 7과 동일)
+pending navigation consume 후 handler 실행 (시나리오 7과 동일)
 ```
 
 ### 시나리오 9: 새로고침 후 Once 핸들러 (빈 HandlerMap + preRegisteredHandler)
@@ -477,15 +484,15 @@ isNavigationConfirmed?  (핸들러가 이미 이 네비게이션을 승인함)
          │
          ├── YES → handleSessionBoundary
          │          ├── 핸들러 등록됨?
-         │          │    ├── YES → history.go(1)로 URL 복원, (브라우저가 안정된 뒤)
-         │          │    │         핸들러 실행:
-         │          │    │           ├── 허용 → isNavigationConfirmed 설정, history.back()
+         │          │    ├── YES → pending navigation(-1)을 시작하고 history.go(1)로
+         │          │    │         URL 복원 후 delta-0 echo(또는 fallback)에서 핸들러 실행:
+         │          │    │           ├── 허용 → 다음 navigation confirm, history.go(-1)
          │          │    │           └── 차단 → 유지
          │          │    └── NO  → preRegisteredHandler 실행
          │          │              ├── 차단 → history.go(1)로 복원
          │          │              └── 허용 → 착지한 항목 채택, 허용
-         │          └── (go(1) 복원의 echo는 token이 일치하는 항목으로 착지하므로,
-         │              아래 delta === 0 분기에서 무시됨 — 별도 플래그 없음)
+         │          └── go(1) 복원의 echo는 token이 일치하는 항목에 도착하고
+         │              아래 delta === 0 분기가 pending navigation을 consume
          │
          └── NO → handleInternalNavigation (index delta로 분류)
                    ├── delta === 0
@@ -494,8 +501,9 @@ isNavigationConfirmed?  (핸들러가 이미 이 네비게이션을 승인함)
                    ├── delta > 0  → forward 네비게이션 → 허용
                    └── delta < 0  → back 네비게이션
                          ├── 핸들러 등록됨?
-                         │    ├── YES → history.go(-delta)로 URL 복원, 핸들러 실행
-                         │    │         (허용 → isNavigationConfirmed 설정, go(delta);
+                         │    ├── YES → pending navigation(delta)을 시작하고
+                         │    │         history.go(-delta)로 URL 복원 후 핸들러 실행
+                         │    │         (허용 → 다음 navigation confirm, go(delta);
                          │    │          차단 → 유지)
                          │    └── NO  → preRegisteredHandler 실행
                          │              ├── 차단 → history.go(-delta)로 복원
@@ -529,7 +537,9 @@ interface PartialBackNavigationHandlerOptions {
 
 | 파일 | 역할 |
 |------|------|
-| `src/useInterceptPopState.ts` | Popstate 인터셉션 (핵심 로직) |
+| `src/useInterceptPopState.ts` | Next.js `beforePopState` 연결 |
+| `src/useInterceptPopState.helper/popstate-interceptor.ts` | popstate 분류와 복원/재실행 흐름 |
+| `src/useInterceptPopState.helper/pending-navigation.ts` | 대기 중인 뒤로가기 delta |
 | `src/useRegisterBackNavigationHandler.ts` | 핸들러 등록 훅 |
 | `src/useInterceptPopState.helper/history-augmentation.ts` | History API 패치 |
 | `src/BackNavigationHandlerProvider.tsx` | Provider 컴포넌트 |
