@@ -1,41 +1,38 @@
 /**
- * Handler Execution
+ * 핸들러 실행
  *
- * Executes registered navigation handlers in priority order. Handlers may be async and
- * return a boolean to allow/block navigation.
+ * 뒤로가기 실행 시 등록된 핸들러를 우선순위에 따라 실행한다. 핸들러는 비동기일 수 있으며,
+ * 뒤로가기 허용 여부를 불리언 값으로 반환한다.
  *
- * `once: true` means "execute once", not "allow navigation once": the handler is removed
- * BEFORE execution, so it runs exactly once regardless of its return value. (Removing it
- * only on `return true` would let a blocking handler re-run on a later back press.)
+ * `once: true`는 "뒤로가기를 한 번 허용한다"가 아니라 "한 번 실행한다"는 의미다.
+ * 따라서 반환값과 관계없이 정확히 한 번만 실행되도록 실행 전에 핸들러를 제거한다.
+ * (`true`를 반환했을 때만 제거하면 뒤로가기를 차단한 핸들러가 이후 뒤로가기에서 다시 실행될 수 있다.)
  */
 
 import { HandlerDef } from "../@shared/types";
 import { debug } from "../@shared/debug";
 import { sortHandlersByPriority } from "./sort-handlers";
 
-export interface HandlerContext {
+/**
+ * 뒤로가기 핸들러 체인을 실행하고 뒤로가기 허용 여부를 반환한다.
+ *
+ * 실행 순서:
+ * 1. preRegisteredHandler(존재하는 경우) - 우선순위가 가장 높아 먼저 실행한다.
+ * 2. 우선순위에 따라 정렬된 handlerMap의 첫 번째 핸들러
+ *
+ * @param options - 핸들러 정보와 복원된 현재 경로
+ * @returns 실행된 모든 핸들러가 뒤로가기를 허용했는지 여부
+ */
+export async function runHandlerChain({
+  handlerMap,
+  preRegisteredHandler,
+  destinationPath,
+}: {
   handlerMap: Map<string, HandlerDef>;
   preRegisteredHandler?: () => boolean;
-}
+  destinationPath: string;
+}): Promise<boolean> {
 
-/**
- * Runs the handler chain and returns whether navigation should be allowed.
- *
- * Execution order:
- * 1. preRegisteredHandler (if exists) - highest priority, runs first
- * 2. First handler from sorted handlerMap (sorted by priority)
- *
- * @param context - Handler context containing handlerMap and optional preRegisteredHandler
- * @param destinationPath - The path user is navigating to (empty string for token mismatch case)
- * @returns Promise<boolean> - true to allow navigation, false to block
- */
-export async function runHandlerChainAndGetShouldAllowNavigation(
-  context: HandlerContext,
-  destinationPath: string
-): Promise<boolean> {
-  const { handlerMap, preRegisteredHandler } = context;
-
-  // Run preRegisteredHandler first (highest priority)
   if (preRegisteredHandler) {
     const shouldContinue = preRegisteredHandler();
     if (!shouldContinue) {
@@ -44,15 +41,14 @@ export async function runHandlerChainAndGetShouldAllowNavigation(
     }
   }
 
-  // Run the first handler by priority (only one handler runs per navigation)
   const sortedHandlers = sortHandlersByPriority([...handlerMap.values()]);
   const firstHandler = sortedHandlers[0];
 
   if (firstHandler) {
-    // IMPORTANT: Delete BEFORE execution to prevent race conditions with React re-renders.
-    // If deleted after execution, a re-render during async callback could re-register
-    // the handler before deletion occurs, causing it to run multiple times.
-    // See: useRegisterBackNavigationHandler.ts hasExecutedRef for the complementary guard.
+    // 중요: React 리렌더링과의 경합을 방지하기 위해 실행 전에 삭제한다.
+    // 실행 후에 삭제하면 비동기 콜백 도중 발생한 리렌더링이 삭제 전에 핸들러를
+    // 다시 등록하여 핸들러가 여러 번 실행될 수 있다.
+    // 함께 사용되는 방어 로직은 useRegisterBackNavigationHandler.ts의 hasExecutedRef를 참고한다.
     if (firstHandler.once) {
       handlerMap.delete(firstHandler.id);
     }

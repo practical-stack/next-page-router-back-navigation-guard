@@ -1,22 +1,16 @@
 import { HandlerDef } from "../@shared/types";
 
 /**
- * Sort handlers by priority.
- * Override handlers are executed first, sorted by overridePriority (lower = higher priority).
- * Non-override handlers are executed after override handlers.
+ * handler를 우선순위에 따라 정렬한다.
+ * override handler는 overridePriority가 낮은 순서대로 먼저 실행한다(낮을수록 우선순위가 높다).
+ * non-override handler는 override handler 다음에 실행한다.
  */
 export function sortHandlersByPriority(handlers: HandlerDef[]): HandlerDef[] {
-  return [...handlers].sort((a, b) => {
-    // Override handlers come first
-    if (a.override && !b.override) return -1;
-    if (!a.override && b.override) return 1;
-
-    // If both have override, sort by overridePriority (lower = higher priority)
-    if (a.override && b.override) {
-      return a.overridePriority - b.overridePriority;
+  return [...handlers].sort((left, right) => {
+    if (left.override !== right.override) {
+      return left.override ? -1 : 1;
     }
 
-    // Non-override handlers maintain original order
-    return 0;
+    return left.override ? left.overridePriority - right.overridePriority : 0;
   });
 }

@@ -1,20 +1,16 @@
-/**
- * Type definitions for history state management.
- */
+/** history state 관리를 위한 타입 정의. */
 
-/**
- * Represents the state of the currently rendered page in the history stack.
- */
-export interface RenderedState {
-  /** Position in the history stack (0-based, increments on pushState) */
+/** history stack에서 현재 렌더링된 페이지에 대응하는 history entry metadata를 나타낸다. */
+export interface RenderedHistoryEntryMetadata {
+  /** history stack에서의 위치(0부터 시작하며 pushState 호출 시 증가) */
   historyIndex: number;
-  /** Unique identifier for the current browser session */
+  /** 현재 browser session의 고유 식별자 */
   sessionToken: string;
 }
 
 /**
- * Structure of history.state with our custom metadata.
- * Next.js may add its own properties, so we use index signature.
+ * custom metadata를 포함한 history.state 구조.
+ * Next.js가 자체 property를 추가할 수 있으므로 index signature를 사용한다.
  */
 export interface NextHistoryState {
   __next_session_token?: string;
