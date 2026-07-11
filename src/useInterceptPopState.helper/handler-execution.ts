@@ -10,7 +10,6 @@
  */
 
 import { HandlerDef } from "../@shared/types";
-import { debug } from "../@shared/debug";
 import { sortHandlersByPriority } from "./sort-handlers";
 
 /**
@@ -36,7 +35,6 @@ export async function runHandlerChain({
   if (preRegisteredHandler) {
     const shouldContinue = preRegisteredHandler();
     if (!shouldContinue) {
-      debug(`[Handler] Cancelled by preRegisteredHandler`);
       return false;
     }
   }
@@ -56,7 +54,6 @@ export async function runHandlerChain({
     const shouldContinue = await firstHandler.callback({ to: destinationPath });
 
     if (!shouldContinue) {
-      debug(`[Handler] Cancelled by handler`);
       return false;
     }
   }

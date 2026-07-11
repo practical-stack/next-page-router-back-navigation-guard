@@ -1,7 +1,6 @@
 import { RouterContext } from "next/dist/shared/lib/router-context.shared-runtime";
 import { useContext } from "react";
 
-import { debug } from "./@shared/debug";
 import type { HandlerDef } from "./@shared/types";
 import { useIsomorphicLayoutEffect } from "./@shared/useIsomorphicLayoutEffect";
 import { createPopstateInterceptor } from "./useInterceptPopState.helper/popstate-interceptor";
@@ -44,7 +43,6 @@ export function useInterceptPopState({
     pagesRouter.beforePopState(() => interceptPopstate(window.history.state));
 
     return () => {
-      debug("[Popstate] Removing navigation interceptor");
       pagesRouter.beforePopState(() => true);
     };
   }, [handlerMap, pagesRouter, preRegisteredHandler]);
