@@ -2,7 +2,6 @@ import { useContext, useId, useRef } from "react";
 import { BackNavigationHandlerContext } from "./BackNavigationHandlerProvider";
 import { HandlerDef } from "./@shared/types";
 import { useIsomorphicLayoutEffect } from "./@shared/useIsomorphicLayoutEffect";
-import { debug } from "./@shared/debug";
 
 // ============================================================
 // Handler option 타입(useRegisterBackNavigationHandler와 같은 파일에 배치)
@@ -173,7 +172,6 @@ export function useRegisterBackNavigationHandler(
           };
 
     if (!resolvedOptions.enable || (resolvedOptions.once && hasExecutedRef.current)) {
-      debug(`Skipping registration for handler: ${callbackId} (enable: ${resolvedOptions.enable}, once: ${resolvedOptions.once}, hasExecuted: ${hasExecutedRef.current})`);
       return;
     }
 
@@ -182,12 +180,9 @@ export function useRegisterBackNavigationHandler(
       console.warn(conflictMessage);
     }
 
-    debug(`Registering back navigation handler: ${callbackId}`, resolvedOptions);
-
     handlerMap.set(callbackId, {
       id: callbackId,
-      callback: async (params) => {
-        debug(`Back navigation handler called:`, params);
+      callback: async () => {
         // handler 실행 중 재등록을 방지하기 위해 handler를 호출하기 전에 설정한다.
         // handler가 state update를 일으키면 React 리렌더링 후 effect가 다시 실행될 수 있다.
         // hasExecutedRef.current가 true이면 effect의 skip 조건이 재등록을 방지한다.
@@ -200,7 +195,6 @@ export function useRegisterBackNavigationHandler(
     });
 
     return () => {
-      debug(`Unregistering back navigation handler: ${callbackId}`);
       handlerMap.delete(callbackId);
     };
   }, [callbackId, handlerMap, handler, options]);

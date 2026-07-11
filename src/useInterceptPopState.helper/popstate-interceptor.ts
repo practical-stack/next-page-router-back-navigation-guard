@@ -1,4 +1,3 @@
-import { debug } from "../@shared/debug";
 import type { HandlerDef } from "../@shared/types";
 import {
   hasRegisteredHandlers,
@@ -70,11 +69,9 @@ export function createPopstateInterceptor(
         destinationPath: getCurrentPath(),
       });
       if (!shouldNavigate) {
-        debug("[Back] Navigation blocked by handler");
         return;
       }
 
-      debug("[Back] Navigation confirmed by handler");
       interceptionState.confirmNextNavigation();
 
       // Phase 3: 사용자가 뒤로가기로 이동하려던 URL을 복원한다. 이후 발생하는 popstate는
@@ -105,7 +102,6 @@ export function createPopstateInterceptor(
 
     scheduleRestoreCompletionFallback(() => {
       if (!pendingNavigation.hasPending()) return;
-      debug("[Back] Restore popstate unavailable; using completion fallback");
       completeRestoreAndRunHandlers();
     });
     return false;
@@ -127,7 +123,6 @@ export function createPopstateInterceptor(
         historyIndex: nextHistoryIndex,
       })
     );
-    debug("[Popstate] Allowed confirmed navigation");
     return true;
   };
 
@@ -138,8 +133,6 @@ export function createPopstateInterceptor(
     nextSessionToken: string | undefined;
     nextHistoryIndex: number;
   }): boolean => {
-    debug("[Popstate] Reached a session boundary");
-
     if (!hasRegisteredHandlers(options.handlerMap)) {
       /**
        * 예를 들어 `once` handler가 실행 후 제거되어 handlerMap은 비었지만 overlay는 아직 열려 있을
@@ -188,8 +181,6 @@ export function createPopstateInterceptor(
     currentRenderedHistoryEntryMetadata: RenderedHistoryEntryMetadata;
     nextHistoryIndex: number;
   }): boolean => {
-    debug(`[Popstate] Intercepted back navigation (delta: ${historyIndexDelta})`);
-
     if (!hasRegisteredHandlers(options.handlerMap)) {
       // 등록된 handler는 없지만 `preRegisteredHandler`가 overlay를 닫으며 `false`를 반환할 수 있다.
       // 이 경우 Next.js는 현재 페이지를 계속 렌더링하므로, 브라우저가 뒤로가기로 먼저 변경한 URL을
@@ -231,10 +222,7 @@ export function createPopstateInterceptor(
        * fallback-only 차단에서 발생한 popstate이므로 그대로 무시해야 한다.
        */
       if (pendingNavigation.hasPending()) {
-        debug("[Popstate] History restore completed");
         completeRestoreAndRunHandlers();
-      } else {
-        debug("[Popstate] Ignored history restore echo");
       }
       return false;
     }
@@ -248,7 +236,6 @@ export function createPopstateInterceptor(
           historyIndex: nextHistoryIndex,
         })
       );
-      debug(`[Popstate] Allowed forward navigation (delta: ${historyIndexDelta})`);
       return true;
     }
 
