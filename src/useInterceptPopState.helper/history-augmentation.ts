@@ -70,7 +70,7 @@ export function getRenderedHistoryEntryMetadata(): RenderedHistoryEntryMetadata 
 /**
  * module-level rendered history entry metadata를 immutable 방식으로 갱신한다.
  */
-function setRenderedHistoryEntryMetadata(
+export function setRenderedHistoryEntryMetadata(
   nextRenderedHistoryEntryMetadata: RenderedHistoryEntryMetadata
 ): void {
   _renderedHistoryEntryMetadata = { ...nextRenderedHistoryEntryMetadata };
@@ -174,16 +174,10 @@ function syncRenderedHistoryEntryMetadataToCurrentEntry({
  * entry의 metadata를 별도로 유지하고, 이를 도착한 entry의 `history.state`와 비교하여 이동 방향과
  * 거리를 계산한다.
  *
- * @returns popstate로 다른 entry가 렌더링된 후, module-level metadata를 해당 entry의
- * `history.state`에 이미 저장된 값으로 갱신하는 setter
  */
-export function initializeHistoryStateSyncOnce(): {
-  setRenderedHistoryEntryMetadata: (
-    renderedHistoryEntryMetadata: RenderedHistoryEntryMetadata
-  ) => void;
-} {
+export function initializeHistoryStateSyncOnce(): void {
   if (_isHistoryStateSyncInitialized) {
-    return { setRenderedHistoryEntryMetadata };
+    return;
   }
 
   // patch하기 전에 원본 method를 저장한다.
@@ -230,8 +224,6 @@ export function initializeHistoryStateSyncOnce(): {
   });
 
   _isHistoryStateSyncInitialized = true;
-
-  return { setRenderedHistoryEntryMetadata };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

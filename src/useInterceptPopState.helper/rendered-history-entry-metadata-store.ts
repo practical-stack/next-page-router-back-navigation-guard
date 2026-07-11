@@ -3,6 +3,7 @@ import {
   generateSessionToken,
   getRenderedHistoryEntryMetadata,
   initializeHistoryStateSyncOnce,
+  setRenderedHistoryEntryMetadata,
 } from "./history-augmentation";
 
 /**
@@ -22,7 +23,7 @@ import {
  * 이미 기록되어 있기 때문이다.
  */
 export function createRenderedHistoryEntryMetadataStore() {
-  const { setRenderedHistoryEntryMetadata } = initializeHistoryStateSyncOnce();
+  initializeHistoryStateSyncOnce();
 
   return {
     get: (): RenderedHistoryEntryMetadata => getRenderedHistoryEntryMetadata(),
